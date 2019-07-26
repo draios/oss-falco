@@ -15,32 +15,40 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-cmake_minimum_required(VERSION 2.8.2)
+cmake_minimum_required(VERSION 3.3.2)
 
 project(falco)
 
-option(BUILD_WARNINGS_AS_ERRORS "Enable building with -Wextra -Werror flags")
-
-if(NOT DEFINED FALCO_VERSION)
-	set(FALCO_VERSION "0.1.1dev")
+if(NOT SYSDIG_DIR)
+  get_filename_component(SYSDIG_DIR "${PROJECT_SOURCE_DIR}/../sysdig" REALPATH)
 endif()
+
+# Custom CMake modules
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules")
+list(APPEND CMAKE_MODULE_PATH "${SYSDIG_DIR}/cmake/modules")
+
+option(BUILD_WARNINGS_AS_ERRORS "Enable building with -Wextra -Werror flags")
 
 if(NOT DEFINED FALCO_ETC_DIR)
 	set(FALCO_ETC_DIR "/etc/falco")
-endif()
-
-if(NOT CMAKE_BUILD_TYPE)
-	SET(CMAKE_BUILD_TYPE Release)
 endif()
 
 if(NOT DRAIOS_DEBUG_FLAGS)
 	set(DRAIOS_DEBUG_FLAGS "-D_DEBUG")
 endif()
 
+string(TOLOWER "${CMAKE_BUILD_TYPE}" CMAKE_BUILD_TYPE)
+if (CMAKE_BUILD_TYPE STREQUAL "debug")
+	set(KBUILD_FLAGS "${DRAIOS_DEBUG_FLAGS} ${DRAIOS_FEATURE_FLAGS}")
+else()
+	set(CMAKE_BUILD_TYPE "release")
+	set(KBUILD_FLAGS "${DRAIOS_FEATURE_FLAGS}")
+endif()
+
 set(CMAKE_COMMON_FLAGS "-Wall -ggdb ${DRAIOS_FEATURE_FLAGS}")
 
 if(BUILD_WARNINGS_AS_ERRORS)
-	set(CMAKE_SUPPRESSED_WARNINGS "-Wno-unused-parameter -Wno-missing-field-initializers -Wno-sign-compare -Wno-type-limits -Wno-implicit-fallthrough -Wno-format-truncation")
+	set(CMAKE_SUPPRESSED_WARNINGS "-Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Wno-missing-field-initializers -Wno-sign-compare -Wno-type-limits -Wno-implicit-fallthrough -Wno-format-truncation")
 	set(CMAKE_COMMON_FLAGS "${CMAKE_COMMON_FLAGS} -Wextra -Werror ${CMAKE_SUPPRESSED_WARNINGS}")
 endif()
 
@@ -59,11 +67,28 @@ if(CMAKE_SYSTEM_NAME MATCHES "Linux")
 	add_definitions(-DHAS_CAPTURE)
 endif()
 
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-	set(KBUILD_FLAGS "${DRAIOS_DEBUG_FLAGS} ${DRAIOS_FEATURE_FLAGS}")
-else()
-	set(KBUILD_FLAGS "${DRAIOS_FEATURE_FLAGS}")
+# Create the falco version variable according to git index
+if(NOT FALCO_VERSION)
+  include(GetGitRevisionDescription)
+  git_get_exact_tag(FALCO_TAG)
+  if(NOT FALCO_TAG)
+    git_describe(FALCO_VERSION "--always")
+    git_local_changes(FALCO_CHANGES)
+    if(FALCO_CHANGES STREQUAL "DIRTY")
+      string(TOLOWER "${FALCO_CHANGES}" FALCO_CHANGES)
+      set(FALCO_VERSION "${FALCO_VERSION}.${FALCO_CHANGES}")
+    endif()
+    set(FALCO_VERSION "0.${FALCO_VERSION}")
+  else()
+    set(FALCO_VERSION "${FALCO_TAG}")
+    string(REGEX
+           REPLACE "^v([0-9]+)(\\.[0-9]+)(\\.[0-9]+)?"
+                   "\\1\\2\\3"
+                   FALCO_VERSION
+                   ${FALCO_VERSION})
+  endif()
 endif()
+message(STATUS "Falco version: ${FALCO_VERSION}")
 
 set(PACKAGE_NAME "falco")
 set(PROBE_VERSION "${FALCO_VERSION}")
@@ -74,10 +99,6 @@ if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
 endif()
 
 set(CMD_MAKE make)
-
-if(NOT SYSDIG_DIR)
-	set(SYSDIG_DIR "${PROJECT_SOURCE_DIR}/../sysdig")
-endif()
 
 # make luaJIT work on OS X
 if(APPLE)
@@ -140,7 +161,7 @@ else()
                 CONFIGURE_COMMAND ./configure --disable-maintainer-mode --enable-all-static --disable-dependency-tracking
                 BUILD_COMMAND ${CMD_MAKE} LDFLAGS=-all-static
                 BUILD_IN_SOURCE 1
-		PATCH_COMMAND wget -O jq-1.5-fix-tokenadd.patch https://github.com/stedolan/jq/commit/8eb1367ca44e772963e704a700ef72ae2e12babd.patch && patch -i jq-1.5-fix-tokenadd.patch
+		PATCH_COMMAND curl -L https://github.com/stedolan/jq/commit/8eb1367ca44e772963e704a700ef72ae2e12babd.patch | patch
                 INSTALL_COMMAND "")
 endif()
 
@@ -594,7 +615,7 @@ else()
 		BUILD_BYPRODUCTS ${GRPC_LIB} ${GRPCPP_LIB}
 		# TODO s390x support
 		# TODO what if using system zlib
-		PATCH_COMMAND rm -rf third_party/zlib && ln -s ${ZLIB_SRC} third_party/zlib && wget https://download.sysdig.com/dependencies/grpc-1.1.4-Makefile.patch && patch < grpc-1.1.4-Makefile.patch
+		PATCH_COMMAND rm -rf third_party/zlib && ln -s ${ZLIB_SRC} third_party/zlib && curl -L https://download.sysdig.com/dependencies/grpc-1.1.4-Makefile.patch | patch
 		INSTALL_COMMAND "")
 endif()
 
@@ -605,14 +626,6 @@ install(FILES falco.yaml
 add_subdirectory(test)
 add_subdirectory(rules)
 add_subdirectory(docker)
-
-# Add path for custom CMake modules used to build dependencies from Sysdig (libscap, libsinsp)
-list(APPEND CMAKE_MODULE_PATH
-	"${SYSDIG_DIR}/cmake/modules")
-
-# Add path for custom CMake modules
-list(APPEND CMAKE_MODULE_PATH
-	"${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules")
 
 if(CMAKE_SYSTEM_NAME MATCHES "Linux")
 	add_subdirectory("${SYSDIG_DIR}/driver" "${PROJECT_BINARY_DIR}/driver")
@@ -630,10 +643,10 @@ add_subdirectory(userspace/engine)
 add_subdirectory(userspace/falco)
 add_subdirectory(tests)
 
-
 set(CPACK_PACKAGE_NAME "${PACKAGE_NAME}")
 set(CPACK_PACKAGE_VENDOR "Sysdig Inc.")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "falco, a system-level activity monitoring tool")
+set(CPACK_PACKAGE_CONTACT "opensource@sysdig.com")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Falco - Container Native Runtime Security")
 set(CPACK_PACKAGE_DESCRIPTION_FILE "${PROJECT_SOURCE_DIR}/scripts/description.txt")
 set(CPACK_PACKAGE_VERSION "${FALCO_VERSION}")
 set(CPACK_PACKAGE_FILE_NAME "${CPACK_PACKAGE_NAME}-${CPACK_PACKAGE_VERSION}-${CMAKE_SYSTEM_PROCESSOR}")
@@ -643,19 +656,19 @@ set(CPACK_PACKAGE_RELOCATABLE "OFF")
 
 set(CPACK_GENERATOR DEB RPM TGZ)
 
-set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Sysdig <support@sysdig.com>")
 set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
-set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "http://www.sysdig.org")
+set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
+set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "https://www.falco.org")
 set(CPACK_DEBIAN_PACKAGE_DEPENDS "dkms (>= 2.1.0.0)")
 set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA "${CMAKE_BINARY_DIR}/scripts/debian/postinst;${CMAKE_BINARY_DIR}/scripts/debian/prerm;${PROJECT_SOURCE_DIR}/scripts/debian/postrm;${PROJECT_SOURCE_DIR}/cpack/debian/conffiles")
 
 set(CPACK_RPM_PACKAGE_LICENSE "Apache v2.0")
-set(CPACK_RPM_PACKAGE_URL "http://www.sysdig.org")
+set(CPACK_RPM_PACKAGE_URL "https://www.falco.org")
 set(CPACK_RPM_PACKAGE_REQUIRES "dkms, gcc, make, kernel-devel, perl")
 set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE "${PROJECT_SOURCE_DIR}/scripts/rpm/postinstall")
 set(CPACK_RPM_PRE_UNINSTALL_SCRIPT_FILE "${PROJECT_SOURCE_DIR}/scripts/rpm/preuninstall")
 set(CPACK_RPM_POST_UNINSTALL_SCRIPT_FILE "${PROJECT_SOURCE_DIR}/scripts/rpm/postuninstall")
-set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION /usr/src /usr/share/man /usr/share/man/man8 /etc /usr /usr/bin /usr/share /etc/rc.d /etc/rc.d/init.d )
+set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION /usr/src /usr/share/man /usr/share/man/man8 /etc /usr /usr/bin /usr/share /etc/rc.d /etc/rc.d/init.d)
 set(CPACK_RPM_PACKAGE_RELOCATABLE "OFF")
 
 include(CPack)
