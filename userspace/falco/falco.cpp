@@ -76,7 +76,7 @@ static void restart_falco(int signal)
 static void usage()
 {
     printf(
-	   "falco version " FALCO_VERSION "\n"
+	   "Falco version: " FALCO_VERSION "\n"
 	   "Usage: falco [options]\n\n"
 	   "Options:\n"
 	   " -h, --help                    Print this page\n"
@@ -87,7 +87,7 @@ static void usage()
 	   " --cri <path>                  Path to CRI socket for container metadata\n"
 	   "                               Use the specified socket to fetch data from a CRI-compatible runtime\n"
 	   " -d, --daemon                  Run as a daemon\n"
-	   " -D <pattern>                  Disable any rules matching the regex <pattern>. Can be specified multiple times.\n"
+	   " -D <substring>                Disable any rules with names having the substring <substring>. Can be specified multiple times.\n"
 	   "                               Can not be specified with -t.\n"
 	   " -e <events_file>              Read the events from <events_file> (in .scap format for sinsp events, or jsonl for\n"
 	   "                               k8s audit events) instead of tapping into live.\n"
@@ -471,9 +471,9 @@ int falco_init(int argc, char **argv)
 
 	try
 	{
-		set<string> disabled_rule_patterns;
-		string pattern;
-		string all_rules = ".*";
+		set<string> disabled_rule_substrings;
+		string substring;
+		string all_rules = "";
 		set<string> disabled_rule_tags;
 		set<string> enabled_rule_tags;
 
@@ -502,8 +502,8 @@ int falco_init(int argc, char **argv)
 				daemon = true;
 				break;
 			case 'D':
-				pattern = optarg;
-				disabled_rule_patterns.insert(pattern);
+				substring = optarg;
+				disabled_rule_substrings.insert(substring);
 				break;
 			case 'e':
 				trace_filename = optarg;
@@ -604,7 +604,7 @@ int falco_init(int argc, char **argv)
 			case 0:
 				if(string(long_options[long_index].name) == "version")
 				{
-					printf("falco version %s\n", FALCO_VERSION);
+					printf("Falco version: %s\n", FALCO_VERSION);
 					return EXIT_SUCCESS;
 				}
 				else if (string(long_options[long_index].name) == "cri")
@@ -716,7 +716,17 @@ int falco_init(int argc, char **argv)
 			}
 			for(auto file : validate_rules_filenames)
 			{
-				engine->load_rules_file(file, verbose, all_events);
+				// Only include the prefix if there is more than one file
+				std::string prefix = (validate_rules_filenames.size() > 1 ? file + ": " : "");
+				try {
+					engine->load_rules_file(file, verbose, all_events);
+				}
+				catch(falco_exception &e)
+				{
+					printf("%s%s\n", prefix.c_str(), e.what());
+					throw;
+				}
+				printf("%sOk\n", prefix.c_str());
 			}
 			falco_logger::log(LOG_INFO, "Ok\n");
 			goto exit;
@@ -771,15 +781,15 @@ int falco_init(int argc, char **argv)
 		}
 
 		// You can't both disable and enable rules
-		if((disabled_rule_patterns.size() + disabled_rule_tags.size() > 0) &&
+		if((disabled_rule_substrings.size() + disabled_rule_tags.size() > 0) &&
 		    enabled_rule_tags.size() > 0) {
 			throw std::invalid_argument("You can not specify both disabled (-D/-T) and enabled (-t) rules");
 		}
 
-		for (auto pattern : disabled_rule_patterns)
+		for (auto substring : disabled_rule_substrings)
 		{
-			falco_logger::log(LOG_INFO, "Disabling rules matching pattern: " + pattern + "\n");
-			engine->enable_rule(pattern, false);
+			falco_logger::log(LOG_INFO, "Disabling rules matching substring: " + substring + "\n");
+			engine->enable_rule(substring, false);
 		}
 
 		if(disabled_rule_tags.size() > 0)
@@ -905,6 +915,63 @@ int falco_init(int argc, char **argv)
 			goto exit;
 		}
 
+		// If daemonizing, do it here so any init errors will
+		// be returned in the foreground process.
+		if (daemon && !g_daemonized) {
+			pid_t pid, sid;
+
+			pid = fork();
+			if (pid < 0) {
+				// error
+				falco_logger::log(LOG_ERR, "Could not fork. Exiting.\n");
+				result = EXIT_FAILURE;
+				goto exit;
+			} else if (pid > 0) {
+				// parent. Write child pid to pidfile and exit
+				std::ofstream pidfile;
+				pidfile.open(pidfilename);
+
+				if (!pidfile.good())
+				{
+					falco_logger::log(LOG_ERR, "Could not write pid to pid file " + pidfilename + ". Exiting.\n");
+					result = EXIT_FAILURE;
+					goto exit;
+				}
+				pidfile << pid;
+				pidfile.close();
+				goto exit;
+			}
+			// if here, child.
+
+			// Become own process group.
+			sid = setsid();
+			if (sid < 0) {
+				falco_logger::log(LOG_ERR, "Could not set session id. Exiting.\n");
+				result = EXIT_FAILURE;
+				goto exit;
+			}
+
+			// Set umask so no files are world anything or group writable.
+			umask(027);
+
+			// Change working directory to '/'
+			if ((chdir("/")) < 0) {
+				falco_logger::log(LOG_ERR, "Could not change working directory to '/'. Exiting.\n");
+				result = EXIT_FAILURE;
+				goto exit;
+			}
+
+			// Close stdin, stdout, stderr and reopen to /dev/null
+			close(0);
+			close(1);
+			close(2);
+			open("/dev/null", O_RDONLY);
+			open("/dev/null", O_RDWR);
+			open("/dev/null", O_RDWR);
+
+			g_daemonized = true;
+		}
+
 		if (trace_filename.size())
 		{
 			// Try to open the trace file as a sysdig
@@ -967,63 +1034,6 @@ int falco_init(int argc, char **argv)
 		if(!all_events)
 		{
 			inspector->start_dropping_mode(1);
-		}
-
-		// If daemonizing, do it here so any init errors will
-		// be returned in the foreground process.
-		if (daemon && !g_daemonized) {
-			pid_t pid, sid;
-
-			pid = fork();
-			if (pid < 0) {
-				// error
-				falco_logger::log(LOG_ERR, "Could not fork. Exiting.\n");
-				result = EXIT_FAILURE;
-				goto exit;
-			} else if (pid > 0) {
-				// parent. Write child pid to pidfile and exit
-				std::ofstream pidfile;
-				pidfile.open(pidfilename);
-
-				if (!pidfile.good())
-				{
-					falco_logger::log(LOG_ERR, "Could not write pid to pid file " + pidfilename + ". Exiting.\n");
-					result = EXIT_FAILURE;
-					goto exit;
-				}
-				pidfile << pid;
-				pidfile.close();
-				goto exit;
-			}
-			// if here, child.
-
-			// Become own process group.
-			sid = setsid();
-			if (sid < 0) {
-				falco_logger::log(LOG_ERR, "Could not set session id. Exiting.\n");
-				result = EXIT_FAILURE;
-				goto exit;
-			}
-
-			// Set umask so no files are world anything or group writable.
-			umask(027);
-
-			// Change working directory to '/'
-			if ((chdir("/")) < 0) {
-				falco_logger::log(LOG_ERR, "Could not change working directory to '/'. Exiting.\n");
-				result = EXIT_FAILURE;
-				goto exit;
-			}
-
-			// Close stdin, stdout, stderr and reopen to /dev/null
-			close(0);
-			close(1);
-			close(2);
-			open("/dev/null", O_RDONLY);
-			open("/dev/null", O_RDWR);
-			open("/dev/null", O_RDWR);
-
-			g_daemonized = true;
 		}
 
 		if(outfile != "")

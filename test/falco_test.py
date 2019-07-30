@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+ #!/usr/bin/env python
 #
 # Copyright (C) 2016-2018 Draios Inc dba Sysdig.
 #
@@ -34,12 +34,16 @@ class FalcoTest(Test):
         """
         Load the sysdig kernel module if not already loaded.
         """
-        build_type = "Release"
+        build_type = "release"
         if 'BUILD_TYPE' in os.environ:
-            build_type = os.environ['BUILD_TYPE']
+            build_type = os.environ['BUILD_TYPE'].lower()
+            build_type = "debug" if build_type == "debug" else "release"
 
         build_dir = os.path.join('/build', build_type)
         self.falcodir = self.params.get('falcodir', '/', default=os.path.join(self.basedir, build_dir))
+
+        self.stdout_is = self.params.get('stdout_is', '*', default='')
+        self.stderr_is = self.params.get('stderr_is', '*', default='')
 
         self.stdout_contains = self.params.get('stdout_contains', '*', default='')
 
@@ -83,7 +87,20 @@ class FalcoTest(Test):
         if not isinstance(self.rules_file, list):
             self.rules_file = [self.rules_file]
 
+        self.validate_rules_file = self.params.get('validate_rules_file', '*', default=False)
+
+        if self.validate_rules_file == False:
+            self.validate_rules_file = []
+        else:
+            if not isinstance(self.validate_rules_file, list):
+                self.validate_rules_file = [self.validate_rules_file]
+
         self.rules_args = ""
+
+        for file in self.validate_rules_file:
+            if not os.path.isabs(file):
+                file = os.path.join(self.basedir, file)
+            self.rules_args = self.rules_args + "-V " + file + " "
 
         for file in self.rules_file:
             if not os.path.isabs(file):
@@ -252,7 +269,7 @@ class FalcoTest(Test):
         triggered_rules = match.group(1)
 
         for rule, count in self.detect_counts.iteritems():
-            expected = '\s{}: (\d+)'.format(rule)
+            expected = '\s{}: (\d+)'.format(re.sub(r'([$\.*+?()[\]{}|^])', r'\\\1', rule))
             match = re.search(expected, triggered_rules)
 
             if match is None:
@@ -432,6 +449,15 @@ class FalcoTest(Test):
         self.falco_proc = process.SubProcess(cmd)
 
         res = self.falco_proc.run(timeout=180, sig=9)
+
+        if self.stdout_is != '':
+            print(self.stdout_is)
+            if self.stdout_is != res.stdout:
+                self.fail("Stdout was not exactly {}".format(self.stdout_is))
+
+        if self.stderr_is != '':
+            if self.stderr_is != res.stdout:
+                self.fail("Stdout was not exactly {}".format(self.stderr_is))
 
         for pattern in self.stderr_contains:
             match = re.search(pattern, res.stderr)
