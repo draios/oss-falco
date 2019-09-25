@@ -17,19 +17,23 @@ limitations under the License.
 
 */
 
+#include <google/protobuf/util/time_util.h>
+
 #include "falco_outputs.h"
 
 #include "config_falco.h"
 
-
 #include "formats.h"
 #include "logger.h"
+#include "falco_output_queue.h"
 
 using namespace std;
+using namespace falco::output;
 
 const static struct luaL_reg ll_falco_outputs [] =
 {
 	{"handle_http", &falco_outputs::handle_http},
+	{"handle_grpc", &falco_outputs::handle_grpc},
 	{NULL,NULL}
 };
 
@@ -206,7 +210,7 @@ void falco_outputs::handle_msg(uint64_t now,
 		bool first = true;
 
 		sinsp_utils::ts_to_string(now, &timestr, false, true);
-		full_msg = timestr + ": " + falco_common::priority_names[LOG_CRIT] + " " + msg + "(";
+		full_msg = timestr + ": " + falco_common::priority_names[LOG_CRIT] + " " + msg + " (";
 		for(auto &pair : output_fields)
 		{
 			if(first)
@@ -296,5 +300,68 @@ int falco_outputs::handle_http(lua_State *ls)
 		curl_slist_free_all(slist1);
   		slist1 = NULL;
 	}
+	return 1;
+}
+
+int falco_outputs::handle_grpc(lua_State *ls)
+{
+	// check parameters
+	if(!lua_islightuserdata(ls, -7) ||
+	   !lua_isstring(ls, -6) ||
+	   !lua_isstring(ls, -5) ||
+	   !lua_isstring(ls, -4) ||
+	   !lua_isstring(ls, -3) ||
+	   !lua_istable(ls, -2) ||
+	   !lua_istable(ls, -1))
+	{
+		lua_pushstring(ls, "Invalid arguments passed to handle_grpc()");
+		lua_error(ls);
+	}
+
+	response grpc_res = response();
+
+	// time
+	gen_event* evt = (gen_event*)lua_topointer(ls, 1);
+	auto& timestamp = *grpc_res.mutable_time();
+	timestamp = google::protobuf::util::TimeUtil::NanosecondsToTimestamp(evt->get_ts());
+
+	// rule
+	grpc_res.set_rule((char *)lua_tostring(ls, 2));
+
+	// source
+	falco::schema::source s = falco::schema::source::SYSCALL;
+	string sstr = (char *)lua_tostring(ls, 3);
+	if(!falco::schema::source_Parse(sstr, &s))
+	{
+		lua_pushstring(ls, "Unknown source passed to to handle_grpc()");
+		lua_error(ls);
+	}
+	grpc_res.set_source(s);
+
+	// priority
+	falco::schema::priority p = falco::schema::priority::EMERGENCY;
+	string pstr = (char *)lua_tostring(ls, 4);
+	if(!falco::schema::priority_Parse(pstr, &p))
+	{
+		lua_pushstring(ls, "Unknown priority passed to to handle_grpc()");
+		lua_error(ls);
+	}
+	grpc_res.set_priority(p);
+
+	// output
+	grpc_res.set_output((char *)lua_tostring(ls, 5));
+
+	// output fields
+	auto& fields = *grpc_res.mutable_output_fields();
+
+	lua_pushnil(ls); // so that lua_next removes it from stack and puts (k, v) on it
+	while (lua_next(ls, 6) != 0) {
+		fields[lua_tostring(ls, -2)] = lua_tostring(ls, -1);
+		lua_pop(ls, 1); // remove value, keep key for lua_next
+	}
+	lua_pop(ls, 1); // pop table
+
+	falco::output::queue::get().push(grpc_res);
+
 	return 1;
 }
