@@ -47,6 +47,7 @@ limitations under the License.
 #include "config_falco.h"
 #include "statsfilewriter.h"
 #include "webserver.h"
+#include "grpc_server.h"
 
 typedef function<void(sinsp* inspector)> open_t;
 
@@ -220,15 +221,15 @@ static std::string read_file(std::string filename)
 // Event processing loop
 //
 uint64_t do_inspect(falco_engine *engine,
-		    falco_outputs *outputs,
-		    sinsp* inspector,
-		    falco_configuration &config,
-		    syscall_evt_drop_mgr &sdropmgr,
-		    uint64_t duration_to_tot_ns,
-		    string &stats_filename,
-		    uint64_t stats_interval,
-		    bool all_events,
-		    int &result)
+			falco_outputs *outputs,
+			sinsp* inspector,
+			falco_configuration &config,
+			syscall_evt_drop_mgr &sdropmgr,
+			uint64_t duration_to_tot_ns,
+			string &stats_filename,
+			uint64_t stats_interval,
+			bool all_events,
+			int &result)
 {
 	uint64_t num_evts = 0;
 	int32_t rc;
@@ -269,9 +270,14 @@ uint64_t do_inspect(falco_engine *engine,
 			g_reopen_outputs = false;
 		}
 
-		if (g_terminate || g_restart)
+		if(g_terminate)
 		{
-			falco_logger::log(LOG_INFO, "SIGHUP Received, restarting...\n");
+			falco_logger::log(LOG_INFO, "SIGINT received, exiting...\n");
+			break;
+		}
+		else if (g_restart)
+		{
+			falco_logger::log(LOG_INFO, "SIGHUP received, restarting...\n");
 			break;
 		}
 		else if(rc == SCAP_TIMEOUT)
@@ -448,6 +454,8 @@ int falco_init(int argc, char **argv)
 	scap_stats cstats;
 
 	falco_webserver webserver;
+	falco::grpc::server grpc_server;
+	std::thread grpc_server_thread;
 
 	static struct option long_options[] =
 	{
@@ -1162,6 +1170,17 @@ int falco_init(int argc, char **argv)
 			webserver.start();
 		}
 
+		// grpc server
+		if(config.m_grpc_enabled)
+		{
+			// TODO(fntlnz,leodido): when we want to spawn multiple threads we need to have a queue per thread, or implement
+			// different queuing mechanisms, round robin, fanout? What we want to achieve?
+			grpc_server.init(config.m_grpc_bind_address, config.m_grpc_threadiness, config.m_grpc_private_key, config.m_grpc_cert_chain, config.m_grpc_root_certs);
+			grpc_server_thread = std::thread([&grpc_server] {
+				grpc_server.run();
+			});
+		}
+
 		if(!trace_filename.empty() && !trace_is_scap)
 		{
 			read_k8s_audit_trace_file(engine,
@@ -1205,6 +1224,11 @@ int falco_init(int argc, char **argv)
 		engine->print_stats();
 		sdropmgr.print_stats();
 		webserver.stop();
+		if(grpc_server_thread.joinable())
+		{
+			grpc_server.shutdown();
+			grpc_server_thread.join();
+		}
 	}
 	catch(exception &e)
 	{
@@ -1213,6 +1237,11 @@ int falco_init(int argc, char **argv)
 		result = EXIT_FAILURE;
 
 		webserver.stop();
+		if(grpc_server_thread.joinable())
+		{
+			grpc_server.shutdown();
+			grpc_server_thread.join();
+		}
 	}
 
 exit:

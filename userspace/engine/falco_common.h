@@ -21,6 +21,7 @@ limitations under the License.
 
 #include <string>
 #include <exception>
+#include <mutex>
 
 extern "C" {
 #include "lua.h"
@@ -75,7 +76,7 @@ public:
 
 	void set_inspector(sinsp *inspector);
 
-        // Priority levels, as a vector of strings
+    // Priority levels, as a vector of strings
 	static std::vector<std::string> priority_names;
 
 	// Same as numbers/indices into the above vector
@@ -94,11 +95,10 @@ public:
 protected:
 	lua_State *m_ls;
 
+	std::mutex m_ls_semaphore;
+
 	sinsp *m_inspector;
 
 private:
 	void add_lua_path(std::string &path);
 };
-
-
-
