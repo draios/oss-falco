@@ -2415,6 +2415,19 @@
     WARNING
   tag: [process, mitre_defense_evation]
 
+# This rule is deprecated and will/should never be triggered. Keep it here for backport compatibility.
+# Rule Delete or rename shell history is the preferred rule to use now.
+- rule: Delete Bash History
+  desc: Detect bash history deletion
+  condition: >
+    ((spawned_process and proc.name in (shred, rm, mv) and proc.args contains "bash_history") or 
+     (open_write and fd.name contains "bash_history" and evt.arg.flags contains "O_TRUNC"))
+  output: >
+    Shell history had been deleted or renamed (user=%user.name type=%evt.type command=%proc.cmdline fd.name=%fd.name name=%evt.arg.name path=%evt.arg.path oldpath=%evt.arg.oldpath %container.info)
+  priority:
+    WARNING
+  tag: [process, mitre_defense_evation]
+
 - macro: consider_all_chmods
   condition: (always_true)
 
