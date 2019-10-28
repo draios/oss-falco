@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 #
-# Copyright (C) 2016-2018 Draios Inc dba Sysdig.
+# Copyright (C) 2019 The Falco Authors.
 #
-# This file is part of falco.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -89,7 +88,7 @@ function run_tests() {
     # return status when running avocado.
     set +e
     TEST_RC=0
-    for mult in $SCRIPTDIR/falco_traces.yaml $SCRIPTDIR/falco_tests.yaml $SCRIPTDIR/falco_tests_package.yaml $SCRIPTDIR/falco_k8s_audit_tests.yaml; do
+    for mult in $SCRIPTDIR/falco_traces.yaml $SCRIPTDIR/falco_tests.yaml $SCRIPTDIR/falco_tests_package.yaml $SCRIPTDIR/falco_k8s_audit_tests.yaml $SCRIPTDIR/falco_tests_psp.yaml; do
 	CMD="avocado run --mux-yaml $mult --job-results-dir $SCRIPTDIR/job-results -- $SCRIPTDIR/falco_test.py"
 	echo "Running: $CMD"
 	BUILD_DIR=${BUILD_DIR} $CMD

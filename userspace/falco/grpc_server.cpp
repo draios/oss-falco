@@ -1,7 +1,5 @@
 /*
-Copyright (C) 2016-2019 The Falco Authors
-
-This file is part of falco.
+Copyright (C) 2019 The Falco Authors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -36,8 +34,13 @@ limitations under the License.
 		ctx.start(this);                                                   \
 	}
 
+namespace falco
+{
+namespace grpc
+{
+
 template<>
-void falco::grpc::request_stream_context<falco::output::request, falco::output::response>::start(server* srv)
+void request_stream_context<falco::output::request, falco::output::response>::start(server* srv)
 {
 	m_state = request_context_base::REQUEST;
 	m_srv_ctx.reset(new ::grpc::ServerContext);
@@ -50,7 +53,7 @@ void falco::grpc::request_stream_context<falco::output::request, falco::output::
 }
 
 template<>
-void falco::grpc::request_stream_context<falco::output::request, falco::output::response>::process(server* srv)
+void request_stream_context<falco::output::request, falco::output::response>::process(server* srv)
 {
 	// When it is the 1st process call
 	if(m_state == request_context_base::REQUEST)
@@ -79,7 +82,7 @@ void falco::grpc::request_stream_context<falco::output::request, falco::output::
 }
 
 template<>
-void falco::grpc::request_stream_context<falco::output::request, falco::output::response>::end(server* srv, bool errored)
+void request_stream_context<falco::output::request, falco::output::response>::end(server* srv, bool errored)
 {
 	if(m_stream_ctx)
 	{
@@ -92,6 +95,8 @@ void falco::grpc::request_stream_context<falco::output::request, falco::output::
 
 	start(srv);
 }
+} // namespace grpc
+} // namespace falco
 
 void falco::grpc::server::thread_process(int thread_index)
 {

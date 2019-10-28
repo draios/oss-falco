@@ -1,6 +1,4 @@
--- Copyright (C) 2016-2018 Draios Inc dba Sysdig.
---
--- This file is part of falco.
+-- Copyright (C) 2019 The Falco Authors.
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -98,7 +96,9 @@ local function install_filter(node, filter_api_lib, lua_parser, parent_bool_op)
       filter_api_lib.unnest(lua_parser) -- io.write(")")
 
    elseif t == "BinaryRelOp" then
-      if (node.operator == "in" or node.operator == "pmatch") then
+      if (node.operator == "in" or
+          node.operator == "intersects" or
+	  node.operator == "pmatch") then
 	 elements = map(function (el) return el.value end, node.right.elements)
 	 filter_api_lib.rel_expr(lua_parser, node.left.value, node.operator, elements, node.index)
       else
