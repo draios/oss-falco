@@ -1850,7 +1850,7 @@
 # when we lose events and lose track of state.
 
 - macro: container_entrypoint
-  condition: (not proc.pname exists or proc.pname in (runc:[0:PARENT], runc:[1:CHILD], runc, docker-runc, exe))
+  condition: (not proc.pname exists or proc.pname in (runc:[0:PARENT], runc:[1:CHILD], runc, docker-runc, exe, docker-runc-cur))
 
 - rule: Launch Sensitive Mount Container
   desc: >
@@ -2436,16 +2436,16 @@
   condition: (always_true)
 
 - list: user_known_chmod_applications
-  items: []
+  items: [hyperkube]
 
 - rule: Set Setuid or Setgid bit
   desc: >
     When the setuid or setgid bits are set for an application,
     this means that the application will run with the privileges of the owning user or group respectively.
     Detect setuid or setgid bits set via chmod
-  condition: consider_all_chmods and chmod and (evt.arg.mode contains "S_ISUID" or evt.arg.mode contains "S_ISGID") and not proc.cmdline in (user_known_chmod_applications)
+  condition: consider_all_chmods and chmod and (evt.arg.mode contains "S_ISUID" or evt.arg.mode contains "S_ISGID") and not proc.name in (user_known_chmod_applications)
   output: >
-    Setuid or setgid bit is set via chmod (fd=%evt.arg.fd filename=%evt.arg.filename mode=%evt.arg.mode user=%user.name
+    Setuid or setgid bit is set via chmod (fd=%evt.arg.fd filename=%evt.arg.filename mode=%evt.arg.mode user=%user.name process=%proc.name
     command=%proc.cmdline container_id=%container.id container_name=%container.name image=%container.image.repository:%container.image.tag)
   priority:
     NOTICE
@@ -2595,7 +2595,16 @@
   priority: CRITICAL
   tags: [process, mitre_execution]
 
+- list: k8s_client_binaries
+  items: [docker, kubectl, crictl]
+  
+- rule: The docker client is executed in a container
+  desc: Detect a k8s client tool executed inside a container
+  condition: spawned_process and container and proc.name in (k8s_client_binaries)
+  output: "Docker or kubernetes client executed in container (user=%user.name %container.info parent=%proc.pname cmdline=%proc.cmdline)"
+  priority: WARNING
+  tags: [container, mitre_execution]
+  
 # Application rules have moved to application_rules.yaml. Please look
 # there if you want to enable them by adding to
 # falco_rules.local.yaml.
-
