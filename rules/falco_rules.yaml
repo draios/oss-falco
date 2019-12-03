@@ -1832,10 +1832,14 @@
 - macro: sensitive_mount
   condition: (container.mount.dest[/proc*] != "N/A" or
               container.mount.dest[/var/run/docker.sock] != "N/A" or
+              container.mount.dest[/var/run/crio/crio.sock] != "N/A" or
               container.mount.dest[/var/lib/kubelet] != "N/A" or
               container.mount.dest[/var/lib/kubelet/pki] != "N/A" or
               container.mount.dest[/] != "N/A" or
+              container.mount.dest[/home/admin] != "N/A" or
               container.mount.dest[/etc] != "N/A" or
+              container.mount.dest[/etc/kubernetes] != "N/A" or
+              container.mount.dest[/etc/kubernetes/manifests] != "N/A" or
               container.mount.dest[/root*] != "N/A")
 
 # The steps libcontainer performs to set up the root program for a container are:
@@ -2209,6 +2213,26 @@
   output: Outbound connection to EC2 instance metadata service (command=%proc.cmdline connection=%fd.name %container.info image=%container.image.repository:%container.image.tag)
   priority: NOTICE
   tags: [network, aws, container, mitre_discovery]
+
+
+# This rule is not enabled by default, since this rule is for cloud environment(GCP, AWS and Azure) only.
+# If you want to enable this rule, overwrite the first macro,
+# And you can filter the container that you want to allow access to metadata by overwriting the second macro.
+- macro: consider_metadata_access
+  condition: (never_true)
+
+- macro: user_known_metadata_access
+  condition: (k8s.ns.name = "kube-system")
+
+# On GCP, AWS and Azure, 169.254.169.254 is a special IP used to fetch
+# metadata about the instance. The metadata could be used to get credentials by attackers.
+- rule: Contact cloud metadata service from container
+  desc: Detect attempts to contact the Cloud Instance Metadata Service from a container
+  condition: outbound and fd.sip="169.254.169.254" and container and consider_metadata_access and not user_known_metadata_access
+  output: Outbound connection to cloud instance metadata service (command=%proc.cmdline connection=%fd.name %container.info image=%container.image.repository:%container.image.tag)
+  priority: NOTICE
+  tags: [network, container, mitre_discovery]
+
 
 # In a local/user rules file, you should override this macro with the
 # IP address of your k8s api server. The IP 1.2.3.4 is a placeholder
