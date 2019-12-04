@@ -443,10 +443,11 @@
     open_write and
     (fd.filename in (shell_config_filenames) or
      fd.name in (shell_config_files) or
-     fd.directory in (shell_config_directories)) and
-    not proc.name in (shell_binaries)
+     fd.directory in (shell_config_directories))
+    and not proc.name in (shell_binaries)
+    and not exe_running_docker_save
   output: >
-    a shell configuration file has been modified (user=%user.name command=%proc.cmdline file=%fd.name container_id=%container.id image=%container.image.repository)
+    a shell configuration file has been modified (user=%user.name command=%proc.cmdline pcmdline=%proc.pcmdline file=%fd.name container_id=%container.id image=%container.image.repository)
   priority:
     WARNING
   tag: [file, mitre_persistence]
@@ -919,9 +920,11 @@
 - rule: Update Package Repository
   desc: Detect package repositories get updated
   condition: >
-    ((open_write and access_repositories) or (modify and modify_repositories)) and not package_mgmt_procs
+    ((open_write and access_repositories) or (modify and modify_repositories))
+    and not package_mgmt_procs
+    and not exe_running_docker_save
   output: >
-    Repository files get updated (user=%user.name command=%proc.cmdline file=%fd.name newpath=%evt.arg.newpath container_id=%container.id image=%container.image.repository)
+    Repository files get updated (user=%user.name command=%proc.cmdline pcmdline=%proc.pcmdline file=%fd.name newpath=%evt.arg.newpath container_id=%container.id image=%container.image.repository)
   priority:
     NOTICE
   tags: [filesystem, mitre_persistence]
