@@ -39,7 +39,8 @@ falco_outputs::falco_outputs(falco_engine *engine)
 	  m_initialized(false),
 	  m_buffered(true),
 	  m_json_output(false),
-	  m_time_format_iso_8601(false)
+	  m_time_format_iso_8601(false),
+	  m_hostname("")
 {
 
 }
@@ -72,7 +73,7 @@ falco_outputs::~falco_outputs()
 void falco_outputs::init(bool json_output,
 			 bool json_include_output_property,
 			 uint32_t rate, uint32_t max_burst, bool buffered,
-			 bool time_format_iso_8601)
+			 bool time_format_iso_8601, string hostname)
 {
 	// The engine must have been given an inspector by now.
 	if(! m_inspector)
@@ -97,6 +98,7 @@ void falco_outputs::init(bool json_output,
 
 	m_buffered = buffered;
 	m_time_format_iso_8601 = time_format_iso_8601;
+	m_hostname = hostname;
 
 	m_initialized = true;
 }
@@ -146,6 +148,7 @@ void falco_outputs::handle_event(gen_event *ev, string &rule, string &source,
 
 	std::lock_guard<std::mutex> guard(m_ls_semaphore);
 	lua_getglobal(m_ls, m_lua_output_event.c_str());
+
 	if(lua_isfunction(m_ls, -1))
 	{
 		lua_pushlightuserdata(m_ls, ev);
@@ -154,8 +157,9 @@ void falco_outputs::handle_event(gen_event *ev, string &rule, string &source,
 		lua_pushstring(m_ls, falco_common::priority_names[priority].c_str());
 		lua_pushnumber(m_ls, priority);
 		lua_pushstring(m_ls, format.c_str());
+		lua_pushstring(m_ls, m_hostname.c_str());
 
-		if(lua_pcall(m_ls, 6, 0, 0) != 0)
+		if(lua_pcall(m_ls, 7, 0, 0) != 0)
 		{
 			const char* lerr = lua_tostring(m_ls, -1);
 			string err = "Error invoking function output: " + string(lerr);
@@ -300,12 +304,13 @@ int falco_outputs::handle_http(lua_State *ls)
 int falco_outputs::handle_grpc(lua_State *ls)
 {
 	// check parameters
-	if(!lua_islightuserdata(ls, -7) ||
+	if(!lua_islightuserdata(ls, -8) ||
+	   !lua_isstring(ls, -7) ||
 	   !lua_isstring(ls, -6) ||
 	   !lua_isstring(ls, -5) ||
 	   !lua_isstring(ls, -4) ||
-	   !lua_isstring(ls, -3) ||
-	   !lua_istable(ls, -2) ||
+	   !lua_istable(ls, -3) ||
+	   !lua_isstring(ls, -2) ||
 	   !lua_istable(ls, -1))
 	{
 		lua_pushstring(ls, "Invalid arguments passed to handle_grpc()");
@@ -354,6 +359,9 @@ int falco_outputs::handle_grpc(lua_State *ls)
 		lua_pop(ls, 1); // remove value, keep key for lua_next
 	}
 	lua_pop(ls, 1); // pop table
+
+	// hostname
+	grpc_res.set_hostname((char* )lua_tostring(ls, 7));
 
 	falco::output::queue::get().push(grpc_res);
 
