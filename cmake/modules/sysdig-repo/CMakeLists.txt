@@ -10,18 +10,26 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 #
+cmake_minimum_required(VERSION 3.5.1)
+
+project(sysdig-repo NONE)
+
 include(ExternalProject)
 
-set(CATCH2_INCLUDE ${CMAKE_BINARY_DIR}/catch2-prefix/include)
+# The sysdig git reference (branch name, commit hash, or tag)
 
-set(CATCH_EXTERNAL_URL URL https://github.com/catchorg/catch2/archive/v2.9.1.tar.gz URL_HASH
-                       MD5=4980778888fed635bf191d8a86f9f89c)
+# set(SYSDIG_VERSION falco/${FALCO_VERSION_MAJOR}.${FALCO_VERSION_MINOR}.${FALCO_VERSION_PATCH}")
+
+# todo(leodido, fntlnz) > use this line above when FALCO_VERSION variable is ok (PR 872)
+if(NOT SYSDIG_VERSION)
+  set(SYSDIG_VERSION "dev")
+endif()
 
 ExternalProject_Add(
-  catch2
-  PREFIX ${CMAKE_BINARY_DIR}/catch2-prefix
-  ${CATCH_EXTERNAL_URL}
+  sysdig
+  URL "https://github.com/draios/sysdig/archive/${SYSDIG_VERSION}.tar.gz"
+  # URL_HASH SHA256=bd09607aa8beb863db07e695863f7dc543e2d39e7153005759d26a340ff66fa5
   CONFIGURE_COMMAND ""
   BUILD_COMMAND ""
-  INSTALL_COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/catch2-prefix/src/catch2/single_include/catch2/catch.hpp
-                  ${CATCH2_INCLUDE}/catch.hpp)
+  INSTALL_COMMAND ""
+  TEST_COMMAND "")

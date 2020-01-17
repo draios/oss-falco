@@ -10,18 +10,16 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 #
-include(ExternalProject)
 
-set(CATCH2_INCLUDE ${CMAKE_BINARY_DIR}/catch2-prefix/include)
+# Tests coverage
+option(FALCO_COVERAGE "Build test suite with coverage information" OFF)
+if(FALCO_COVERAGE)
+  if(NOT (("${CMAKE_CXX_COMPILER_ID}" MATCHES "GNU") OR ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")))
+    message(FATAL_ERROR "FALCO_COVERAGE requires GCC or Clang.")
+  endif()
 
-set(CATCH_EXTERNAL_URL URL https://github.com/catchorg/catch2/archive/v2.9.1.tar.gz URL_HASH
-                       MD5=4980778888fed635bf191d8a86f9f89c)
-
-ExternalProject_Add(
-  catch2
-  PREFIX ${CMAKE_BINARY_DIR}/catch2-prefix
-  ${CATCH_EXTERNAL_URL}
-  CONFIGURE_COMMAND ""
-  BUILD_COMMAND ""
-  INSTALL_COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/catch2-prefix/src/catch2/single_include/catch2/catch.hpp
-                  ${CATCH2_INCLUDE}/catch.hpp)
+  message(STATUS "Building with coverage information")
+  add_compile_options(-g --coverage)
+  set(CMAKE_SHARED_LINKER_FLAGS "--coverage ${CMAKE_SHARED_LINKER_FLAGS}")
+  set(CMAKE_EXE_LINKER_FLAGS "--coverage ${CMAKE_EXE_LINKER_FLAGS}")
+endif()
