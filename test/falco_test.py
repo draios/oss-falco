@@ -1,12 +1,30 @@
-#!/usr/bin/env python
-
+ #!/usr/bin/env python
+#
+# Copyright (C) 2019 The Falco Authors.
+#
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
 import os
 import re
 import json
 import sets
 import glob
 import shutil
+import stat
 import subprocess
+import sys
+import urllib
 
 from avocado import Test
 from avocado.utils import process
@@ -16,18 +34,52 @@ class FalcoTest(Test):
 
     def setUp(self):
         """
-        Load the sysdig kernel module if not already loaded.
+        Load the kernel module if not already loaded.
         """
-        self.falcodir = self.params.get('falcodir', '/', default=os.path.join(self.basedir, '../build'))
+        build_dir = "/build"
+        if 'BUILD_DIR' in os.environ:
+            build_dir = os.environ['BUILD_DIR']
+
+        self.falcodir = self.params.get('falcodir', '/', default=build_dir)
+
+        self.psp_conv_path = os.path.join(build_dir, "falcoctl")
+        self.psp_conv_url = "https://github.com/falcosecurity/falcoctl/releases/download/v0.0.4/falcoctl-0.0.4-linux-amd64"
+
+        self.stdout_is = self.params.get('stdout_is', '*', default='')
+        self.stderr_is = self.params.get('stderr_is', '*', default='')
 
         self.stdout_contains = self.params.get('stdout_contains', '*', default='')
+
+        if not isinstance(self.stdout_contains, list):
+            self.stdout_contains = [self.stdout_contains]
+
         self.stderr_contains = self.params.get('stderr_contains', '*', default='')
+
+        if not isinstance(self.stderr_contains, list):
+            self.stderr_contains = [self.stderr_contains]
+
+        self.stdout_not_contains = self.params.get('stdout_not_contains', '*', default='')
+
+        if not isinstance(self.stdout_not_contains, list):
+            if self.stdout_not_contains == '':
+                self.stdout_not_contains = []
+            else:
+                self.stdout_not_contains = [self.stdout_not_contains]
+
+        self.stderr_not_contains = self.params.get('stderr_not_contains', '*', default='')
+
+        if not isinstance(self.stderr_not_contains, list):
+            if self.stderr_not_contains == '':
+                self.stderr_not_contains = []
+            else:
+                self.stderr_not_contains = [self.stderr_not_contains]
+
         self.exit_status = self.params.get('exit_status', '*', default=0)
         self.should_detect = self.params.get('detect', '*', default=False)
         self.trace_file = self.params.get('trace_file', '*', default='')
 
         if self.trace_file and not os.path.isabs(self.trace_file):
-            self.trace_file = os.path.join(self.basedir, self.trace_file)
+            self.trace_file = os.path.join(build_dir, "test", self.trace_file)
 
         self.json_output = self.params.get('json_output', '*', default=False)
         self.json_include_output_property = self.params.get('json_include_output_property', '*', default=True)
@@ -38,7 +90,27 @@ class FalcoTest(Test):
         if not isinstance(self.rules_file, list):
             self.rules_file = [self.rules_file]
 
+        self.validate_rules_file = self.params.get('validate_rules_file', '*', default=False)
+
+        if self.validate_rules_file == False:
+            self.validate_rules_file = []
+        else:
+            if not isinstance(self.validate_rules_file, list):
+                self.validate_rules_file = [self.validate_rules_file]
+
+        self.psp_rules_file = os.path.join(build_dir, "psp_rules.yaml")
+
+        self.psp_file = self.params.get('psp_file', '*', default="")
+
         self.rules_args = ""
+
+        if self.psp_file != "":
+            self.rules_args = self.rules_args + "-r " + self.psp_rules_file + " "
+
+        for file in self.validate_rules_file:
+            if not os.path.isabs(file):
+                file = os.path.join(self.basedir, file)
+            self.rules_args = self.rules_args + "-V " + file + " "
 
         for file in self.rules_file:
             if not os.path.isabs(file):
@@ -70,8 +142,8 @@ class FalcoTest(Test):
         else:
             detect_counts = {}
             for item in self.detect_counts:
-                for item2 in item:
-                    detect_counts[item2[0]] = item2[1]
+                for key, value in item.items():
+                    detect_counts[key] = value
             self.detect_counts = detect_counts
 
         self.rules_warning = self.params.get('rules_warning', '*', default=False)
@@ -99,15 +171,6 @@ class FalcoTest(Test):
 
         self.package = self.params.get('package', '*', default='None')
 
-        if self.package == 'None':
-            # Doing this in 2 steps instead of simply using
-            # module_is_loaded to avoid logging lsmod output to the log.
-            lsmod_output = process.system_output("lsmod", verbose=False)
-
-            if linux_modules.parse_lsmod_for_module(lsmod_output, 'falco_probe') == {}:
-                self.log.debug("Loading falco kernel module")
-                process.run('insmod {}/driver/falco-probe.ko'.format(self.falcodir), sudo=True)
-
         self.addl_docker_run_args = self.params.get('addl_docker_run_args', '*', default='')
 
         self.copy_local_driver = self.params.get('copy_local_driver', '*', default=False)
@@ -122,10 +185,10 @@ class FalcoTest(Test):
         else:
             outputs = []
             for item in self.outputs:
-                for item2 in item:
+                for key, value in item.items():
                     output = {}
-                    output['file'] = item2[0]
-                    output['line'] = item2[1]
+                    output['file'] = key
+                    output['line'] = value
                     outputs.append(output)
                     filedir = os.path.dirname(output['file'])
                     # Create the parent directory for the trace file if it doesn't exist.
@@ -142,6 +205,8 @@ class FalcoTest(Test):
 
         if self.run_tags == '':
             self.run_tags=[]
+
+        self.time_iso_8601 = self.params.get('time_iso_8601', '*', default=False)
 
     def tearDown(self):
         if self.package != 'None':
@@ -214,7 +279,7 @@ class FalcoTest(Test):
         triggered_rules = match.group(1)
 
         for rule, count in self.detect_counts.iteritems():
-            expected = '\s{}: (\d+)'.format(rule)
+            expected = '\s{}: (\d+)'.format(re.sub(r'([$\.*+?()[\]{}|^])', r'\\\1', rule))
             match = re.search(expected, triggered_rules)
 
             if match is None:
@@ -267,16 +332,12 @@ class FalcoTest(Test):
             # Remove an existing falco-test container first. Note we don't check the output--docker rm
             # doesn't have an -i equivalent.
             res = process.run("docker rm falco-test", ignore_status=True)
-            rules_dir = os.path.abspath(os.path.join(self.basedir, "./rules"))
-            conf_dir = os.path.abspath(os.path.join(self.basedir, "../"))
-            traces_dir = os.path.abspath(os.path.join(self.basedir, "./trace_files"))
-            self.falco_binary_path = "docker run -i -t --name falco-test --privileged " \
-                                     "-v {}:/host/rules -v {}:/host/conf -v {}:/host/traces " \
+
+            self.falco_binary_path = "docker run --rm --name falco-test --privileged " \
                                      "-v /var/run/docker.sock:/host/var/run/docker.sock " \
                                      "-v /dev:/host/dev -v /proc:/host/proc:ro -v /boot:/host/boot:ro " \
-                                     "-v /lib/modules:/host/lib/modules:ro -v {}:/root/.sysdig:ro -v " \
-                                     "/usr:/host/usr:ro {} {} falco".format(
-                                         rules_dir, conf_dir, traces_dir,
+                                     "-v /lib/modules:/host/lib/modules:ro -v {}:/root/.sysdig:ro " \
+                                     "-v /usr:/host/usr:ro {} {} falco".format(
                                          self.module_dir, self.addl_docker_run_args, image)
 
         elif self.package.endswith(".deb"):
@@ -295,11 +356,31 @@ class FalcoTest(Test):
             self.log.debug("Installing debian package via \"{}\"".format(cmdline))
             res = process.run(cmdline, timeout=120, sudo=True)
 
+        elif self.package.endswith(".rpm"):
+            self.falco_binary_path = '/usr/bin/falco';
+
+            package_glob = "{}/{}".format(self.falcodir, self.package)
+
+            matches = glob.glob(package_glob)
+
+            if len(matches) != 1:
+                self.fail("Package path {} did not match exactly 1 file. Instead it matched: {}", package_glob, ",".join(matches))
+
+            package_path = matches[0]
+
+            cmdline = "rpm -i --nodeps --noscripts {}".format(package_path)
+            self.log.debug("Installing centos package via \"{}\"".format(cmdline))
+            res = process.run(cmdline, timeout=120, sudo=True)
+
     def uninstall_package(self):
 
         if self.package.startswith("docker:"):
-            # Remove the falco-test image. Here we *do* check the return value
-            res = process.run("docker rm falco-test")
+            self.log.debug("Nothing to do, docker run with --rm")
+
+        elif self.package.endswith(".rpm"):
+            cmdline = "rpm -e --noscripts --nodeps falco"
+            self.log.debug("Uninstalling centos package via \"{}\"".format(cmdline))
+            res = process.run(cmdline, timeout=120, sudo=True)
 
         elif self.package.endswith(".deb"):
             cmdline = "dpkg --purge falco"
@@ -326,7 +407,7 @@ class FalcoTest(Test):
             kernel_release = subprocess.check_output(["uname", "-r"]).rstrip()
             self.log.info("kernel release {}".format(kernel_release))
 
-            # sysdig-probe-loader has a more comprehensive set of ways to
+            # falco-probe-loader has a more comprehensive set of ways to
             # find the config hash. We only look at /boot/config-<kernel release>
             md5_output = subprocess.check_output(["md5sum", "/boot/config-{}".format(kernel_release)]).rstrip()
             config_hash = md5_output.split(" ")[0]
@@ -353,6 +434,31 @@ class FalcoTest(Test):
         if self.trace_file:
             trace_arg = "-e {}".format(self.trace_file)
 
+        # Possibly run psp converter
+        if self.psp_file != "":
+
+            if not os.path.isfile(self.psp_conv_path):
+                self.log.info("Downloading {} to {}".format(self.psp_conv_url, self.psp_conv_path))
+
+                urllib.urlretrieve(self.psp_conv_url, self.psp_conv_path)
+                os.chmod(self.psp_conv_path, stat.S_IEXEC)
+
+            conv_cmd = '{} convert psp --psp-path {} --rules-path {}'.format(
+                self.psp_conv_path, os.path.join(self.basedir, self.psp_file), self.psp_rules_file)
+
+            conv_proc = process.SubProcess(conv_cmd)
+
+            conv_res = conv_proc.run(timeout=180, sig=9)
+
+            if conv_res.exit_status != 0:
+                self.error("psp_conv command \"{}\" exited with unexpected return value {}. Full stdout={} stderr={}".format(
+                    conv_cmd, conv_res.exit_status, conv_res.stdout, conv_res.stderr))
+
+            with open(self.psp_rules_file, 'r') as myfile:
+                psp_rules = myfile.read()
+                self.log.debug("Converted Rules: {}".format(psp_rules))
+
+
         # Run falco
         cmd = '{} {} {} -c {} {} -o json_output={} -o json_include_output_property={} -o priority={} -v'.format(
             self.falco_binary_path, self.rules_args, self.disabled_args, self.conf_file, trace_arg, self.json_output, self.json_include_output_property, self.priority)
@@ -369,19 +475,41 @@ class FalcoTest(Test):
         if self.all_events:
             cmd += ' -A'
 
+        if self.time_iso_8601:
+            cmd += ' -o time_format_iso_8601=true'
+
         self.falco_proc = process.SubProcess(cmd)
 
         res = self.falco_proc.run(timeout=180, sig=9)
 
-        if self.stderr_contains != '':
-            match = re.search(self.stderr_contains, res.stderr)
-            if match is None:
-                self.fail("Stderr of falco process did not contain content matching {}".format(self.stderr_contains))
+        if self.stdout_is != '':
+            print(self.stdout_is)
+            if self.stdout_is != res.stdout:
+                self.fail("Stdout was not exactly {}".format(self.stdout_is))
 
-        if self.stdout_contains != '':
-            match = re.search(self.stdout_contains, res.stdout)
+        if self.stderr_is != '':
+            if self.stderr_is != res.stdout:
+                self.fail("Stdout was not exactly {}".format(self.stderr_is))
+
+        for pattern in self.stderr_contains:
+            match = re.search(pattern, res.stderr)
             if match is None:
-                self.fail("Stdout of falco process '{}' did not contain content matching {}".format(res.stdout, self.stdout_contains))
+                self.fail("Stderr of falco process did not contain content matching {}".format(pattern))
+
+        for pattern in self.stdout_contains:
+            match = re.search(pattern, res.stdout)
+            if match is None:
+                self.fail("Stdout of falco process '{}' did not contain content matching {}".format(res.stdout, pattern))
+
+        for pattern in self.stderr_not_contains:
+            match = re.search(pattern, res.stderr)
+            if match is not None:
+                self.fail("Stderr of falco process contained content matching {} when it should have not".format(pattern))
+
+        for pattern in self.stdout_not_contains:
+            match = re.search(pattern, res.stdout)
+            if match is not None:
+                self.fail("Stdout of falco process '{}' did contain content matching {} when it should have not".format(res.stdout, pattern))
 
         if res.exit_status != self.exit_status:
             self.error("Falco command \"{}\" exited with unexpected return value {} (!= {})".format(

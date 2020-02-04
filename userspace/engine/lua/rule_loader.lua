@@ -1,19 +1,17 @@
+-- Copyright (C) 2019 The Falco Authors.
 --
--- Copyright (C) 2016 Draios inc.
+-- Licensed under the Apache License, Version 2.0 (the "License");
+-- you may not use this file except in compliance with the License.
+-- You may obtain a copy of the License at
 --
--- This file is part of falco.
+--     http://www.apache.org/licenses/LICENSE-2.0
 --
--- falco is free software; you can redistribute it and/or modify
--- it under the terms of the GNU General Public License version 2 as
--- published by the Free Software Foundation.
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS,
+-- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-- See the License for the specific language governing permissions and
+-- limitations under the License.
 --
--- falco is distributed in the hope that it will be useful,
--- but WITHOUT ANY WARRANTY; without even the implied warranty of
--- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
--- GNU General Public License for more details.
---
--- You should have received a copy of the GNU General Public License
--- along with falco.  If not, see <http://www.gnu.org/licenses/>.
 
 --[[
    Compile and install falco rules.
@@ -22,6 +20,7 @@
 
 --]]
 
+local sinsp_rule_utils = require "sinsp_rule_utils"
 local compiler = require "compiler"
 local yaml = require"lyaml"
 
@@ -58,22 +57,19 @@ function map(f, arr)
    return res
 end
 
-priorities = {"Emergency", "Alert", "Critical", "Error", "Warning", "Notice", "Informational", "Debug"}
 
-local function priority_num_for(s)
-   s = string.lower(s)
-   for i,v in ipairs(priorities) do
-      if (string.find(string.lower(v), "^"..s)) then
-	 return i - 1 -- (numbers start at 0, lua indices start at 1)
-      end
-   end
-   error("Invalid priority level: "..s)
-end
+-- Permissive for case and for common abbreviations.
+priorities = {
+   Emergency=0, Alert=1, Critical=2, Error=3, Warning=4, Notice=5, Informational=5, Debug=7,
+   emergency=0, alert=1, critical=2, error=3, warning=4, notice=5, informational=5, debug=7,
+   EMERGENCY=0, ALERT=1, CRITICAL=2, ERROR=3, WARNING=4, NOTICE=5, INFORMATIONAL=5, DEBUG=7,
+   INFO=5, info=5
+}
 
 --[[
    Take a filter AST and set it up in the libsinsp runtime, using the filter API.
 --]]
-local function install_filter(node, parent_bool_op)
+local function install_filter(node, filter_api_lib, lua_parser, parent_bool_op)
    local t = node.type
 
    if t == "BinaryBoolOp" then
@@ -82,34 +78,36 @@ local function install_filter(node, parent_bool_op)
       -- never necessary when we have identical successive operators. so we
       -- avoid it as a runtime performance optimization.
       if (not(node.operator == parent_bool_op)) then
-	 filter.nest() -- io.write("(")
+	 filter_api_lib.nest(lua_parser) -- io.write("(")
       end
 
-      install_filter(node.left, node.operator)
-      filter.bool_op(node.operator) -- io.write(" "..node.operator.." ")
-      install_filter(node.right, node.operator)
+      install_filter(node.left, filter_api_lib, lua_parser, node.operator)
+      filter_api_lib.bool_op(lua_parser, node.operator) -- io.write(" "..node.operator.." ")
+      install_filter(node.right, filter_api_lib, lua_parser, node.operator)
 
       if (not (node.operator == parent_bool_op)) then
-	 filter.unnest() -- io.write(")")
+	 filter_api_lib.unnest(lua_parser) -- io.write(")")
       end
 
    elseif t == "UnaryBoolOp" then
-      filter.nest() --io.write("(")
-      filter.bool_op(node.operator) -- io.write(" "..node.operator.." ")
-      install_filter(node.argument)
-      filter.unnest() -- io.write(")")
+      filter_api_lib.nest(lua_parser) --io.write("(")
+      filter_api_lib.bool_op(lua_parser, node.operator) -- io.write(" "..node.operator.." ")
+      install_filter(node.argument, filter_api_lib, lua_parser)
+      filter_api_lib.unnest(lua_parser) -- io.write(")")
 
    elseif t == "BinaryRelOp" then
-      if (node.operator == "in" or node.operator == "pmatch") then
+      if (node.operator == "in" or
+          node.operator == "intersects" or
+	  node.operator == "pmatch") then
 	 elements = map(function (el) return el.value end, node.right.elements)
-	 filter.rel_expr(node.left.value, node.operator, elements, node.index)
+	 filter_api_lib.rel_expr(lua_parser, node.left.value, node.operator, elements, node.index)
       else
-	 filter.rel_expr(node.left.value, node.operator, node.right.value, node.index)
+	 filter_api_lib.rel_expr(lua_parser, node.left.value, node.operator, node.right.value, node.index)
       end
       -- io.write(node.left.value.." "..node.operator.." "..node.right.value)
 
    elseif t == "UnaryRelOp"  then
-      filter.rel_expr(node.argument.value, node.operator, node.index)
+      filter_api_lib.rel_expr(lua_parser, node.argument.value, node.operator, node.index)
       --io.write(node.argument.value.." "..node.operator)
 
    else
@@ -182,41 +180,137 @@ function table.tostring( tbl )
   return "{" .. table.concat( result, "," ) .. "}"
 end
 
+-- Split rules_content by lines and also remember the line numbers for
+-- each top -level object. Returns a table of lines and a table of
+-- line numbers for objects.
 
-function load_rules(rules_content, rules_mgr, verbose, all_events, extra, replace_container_info, min_priority)
+function split_lines(rules_content)
+   lines = {}
+   indices = {}
 
-   compiler.set_verbose(verbose)
-   compiler.set_all_events(all_events)
+   idx = 1
+   last_pos = 1
+   pos = string.find(rules_content, "\n", 1, true)
 
-   local rules = yaml.load(rules_content)
+   while pos ~= nil do
+      line = string.sub(rules_content, last_pos, pos-1)
+      if line ~= "" then
+	 lines[#lines+1] = line
+	 if string.len(line) >= 3 and string.sub(line, 1, 3) == "---" then
+	    -- Document marker, skip
+         elseif string.sub(line, 1, 1) == '-' then
+	    indices[#indices+1] = idx
+	 end
 
-   if rules == nil then
-      -- An empty rules file is acceptable
-      return
+	 idx = idx + 1
+      end
+
+      last_pos = pos+1
+      pos = string.find(rules_content, "\n", pos+1, true)
    end
 
-   if type(rules) ~= "table" then
-      error("Rules content \""..rules_content.."\" is not yaml")
+   if last_pos < string.len(rules_content) then
+      line = string.sub(rules_content, last_pos)
+      lines[#lines+1] = line
+      if string.sub(line, 1, 1) == '-' then
+	 indices[#indices+1] = idx
+      end
+
+      idx = idx + 1
    end
+
+   -- Add a final index for last line in document
+   indices[#indices+1] = idx
+
+   return lines, indices
+end
+
+function get_orig_yaml_obj(rules_lines, row)
+   local ret = ""
+
+   idx = row
+   while (idx <= #rules_lines) do
+      ret = ret..rules_lines[idx].."\n"
+      idx = idx + 1
+
+      if idx > #rules_lines or rules_lines[idx] == "" or string.sub(rules_lines[idx], 1, 1) == '-' then
+	 break
+      end
+   end
+
+   return ret
+end
+
+function get_lines(rules_lines, row, num_lines)
+   local ret = ""
+
+   idx = row
+   while (idx < (row + num_lines) and idx <= #rules_lines) do
+      ret = ret..rules_lines[idx].."\n"
+      idx = idx + 1
+   end
+
+   return ret
+end
+
+function build_error(rules_lines, row, num_lines, err)
+   local ret = err.."\n---\n"..get_lines(rules_lines, row, num_lines).."---"
+
+   return ret
+end
+
+function build_error_with_context(ctx, err)
+   local ret = err.."\n---\n"..ctx.."---"
+   return ret
+end
+
+function load_rules_doc(rules_mgr, doc, load_state)
 
    -- Iterate over yaml list. In this pass, all we're doing is
    -- populating the set of rules, macros, and lists. We're not
    -- expanding/compiling anything yet. All that will happen in a
    -- second pass
-   for i,v in ipairs(rules) do
+   for i,v in ipairs(doc) do
+
+      load_state.cur_item_idx = load_state.cur_item_idx + 1
+
+      -- Save back the original object as it appeared in the file. Will be used to provide context.
+      local context = get_orig_yaml_obj(load_state.lines,
+					load_state.indices[load_state.cur_item_idx])
 
       if (not (type(v) == "table")) then
-	 error ("Unexpected element of type " ..type(v)..". Each element should be a yaml associative array.")
+	 return false, build_error_with_context(context, "Unexpected element of type " ..type(v)..". Each element should be a yaml associative array.")
       end
 
-      if (v['macro']) then
+      v['context'] = context
+
+      if (v['required_engine_version']) then
+	 load_state.required_engine_version = v['required_engine_version']
+	 if type(load_state.required_engine_version) ~= "number" then
+	    return false, build_error_with_context(v['context'], "Value of required_engine_version must be a number")
+	 end
+
+	 if falco_rules.engine_version(rules_mgr) < v['required_engine_version'] then
+	    return false, build_error_with_context(v['context'], "Rules require engine version "..v['required_engine_version']..", but engine version is "..falco_rules.engine_version(rules_mgr))
+	 end
+
+      elseif (v['macro']) then
+
+	 if (v['macro'] == nil or type(v['macro']) == "table") then
+	    return false, build_error_with_context(v['context'], "Macro name is empty")
+	 end
+
+	 if v['source'] == nil then
+	    v['source'] = "syscall"
+	 end
+
 	 if state.macros_by_name[v['macro']] == nil then
 	    state.ordered_macro_names[#state.ordered_macro_names+1] = v['macro']
 	 end
 
-	 for i, field in ipairs({'condition'}) do
+	 for j, field in ipairs({'condition'}) do
 	    if (v[field] == nil) then
-	       error ("Missing "..field.." in macro with name "..v['macro'])
+	       return false, build_error_with_context(v['context'], "Macro must have property "..field)
 	    end
 	 end
 
@@ -229,10 +323,13 @@ function load_rules(rules_content, rules_mgr, verbose, all_events, extra, replac
 
 	 if append then
 	    if state.macros_by_name[v['macro']] == nil then
-	       error ("Macro " ..v['macro'].. " has 'append' key but no macro by that name already exists")
+	       return false, build_error_with_context(v['context'], "Macro " ..v['macro'].. " has 'append' key but no macro by that name already exists")
 	    end
 
 	    state.macros_by_name[v['macro']]['condition'] = state.macros_by_name[v['macro']]['condition'] .. " " .. v['condition']
+
+	    -- Add the current object to the context of the base macro
+	    state.macros_by_name[v['macro']]['context'] = state.macros_by_name[v['macro']]['context'].."\n"..v['context']
 
 	 else
 	    state.macros_by_name[v['macro']] = v
@@ -240,13 +337,17 @@ function load_rules(rules_content, rules_mgr, verbose, all_events, extra, replac
 
       elseif (v['list']) then
 
+	 if (v['list'] == nil or type(v['list']) == "table") then
+	    return false, build_error_with_context(v['context'], "List name is empty")
+	 end
+
 	 if state.lists_by_name[v['list']] == nil then
 	    state.ordered_list_names[#state.ordered_list_names+1] = v['list']
 	 end
 
-	 for i, field in ipairs({'items'}) do
+	 for j, field in ipairs({'items'}) do
 	    if (v[field] == nil) then
-	       error ("Missing "..field.." in list with name "..v['list'])
+	       return false, build_error_with_context(v['context'], "List must have property "..field)
 	    end
 	 end
 
@@ -259,10 +360,10 @@ function load_rules(rules_content, rules_mgr, verbose, all_events, extra, replac
 
 	 if append then
 	    if state.lists_by_name[v['list']] == nil then
-	       error ("List " ..v['list'].. " has 'append' key but no list by that name already exists")
+	       return false, build_error_with_context(v['context'], "List " ..v['list'].. " has 'append' key but no list by that name already exists")
 	    end
 
-	    for i, elem in ipairs(v['items']) do
+	    for j, elem in ipairs(v['items']) do
 	       table.insert(state.lists_by_name[v['list']]['items'], elem)
 	    end
 	 else
@@ -272,13 +373,17 @@ function load_rules(rules_content, rules_mgr, verbose, all_events, extra, replac
       elseif (v['rule']) then
 
 	 if (v['rule'] == nil or type(v['rule']) == "table") then
-	    error ("Missing name in rule")
+	    return false, build_error_with_context(v['context'], "Rule name is empty")
 	 end
 
 	 -- By default, if a rule's condition refers to an unknown
 	 -- filter like evt.type, etc the loader throws an error.
 	 if v['skip-if-unknown-filter'] == nil then
 	    v['skip-if-unknown-filter'] = false
+	 end
+
+	 if v['source'] == nil then
+	    v['source'] = "syscall"
 	 end
 
 	 -- Possibly append to the condition field of an existing rule
@@ -291,32 +396,39 @@ function load_rules(rules_content, rules_mgr, verbose, all_events, extra, replac
 	 if append then
 
 	    -- For append rules, all you need is the condition
-	    for i, field in ipairs({'condition'}) do
+	    for j, field in ipairs({'condition'}) do
 	       if (v[field] == nil) then
-		  error ("Missing "..field.." in rule with name "..v['rule'])
+		  return false, build_error_with_context(v['context'], "Rule must have property "..field)
 	       end
 	    end
 
 	    if state.rules_by_name[v['rule']] == nil then
 	       if state.skipped_rules_by_name[v['rule']] == nil then
-		  error ("Rule " ..v['rule'].. " has 'append' key but no rule by that name already exists")
+		  return false, build_error_with_context(v['context'], "Rule " ..v['rule'].. " has 'append' key but no rule by that name already exists")
 	       end
 	    else
 	       state.rules_by_name[v['rule']]['condition'] = state.rules_by_name[v['rule']]['condition'] .. " " .. v['condition']
+
+	    -- Add the current object to the context of the base rule
+	       state.rules_by_name[v['rule']]['context'] = state.rules_by_name[v['rule']]['context'].."\n"..v['context']
 	    end
 
 	 else
 
-	    for i, field in ipairs({'condition', 'output', 'desc', 'priority'}) do
+	    for j, field in ipairs({'condition', 'output', 'desc', 'priority'}) do
 	       if (v[field] == nil) then
-		  error ("Missing "..field.." in rule with name "..v['rule'])
+		  return false, build_error_with_context(v['context'], "Rule must have property "..field)
 	       end
 	    end
 
 	    -- Convert the priority-as-string to a priority-as-number now
-	    v['priority_num'] = priority_num_for(v['priority'])
+	    v['priority_num'] = priorities[v['priority']]
 
-	    if v['priority_num'] <= min_priority then
+	    if v['priority_num'] == nil then
+	       error("Invalid priority level: "..v['priority'])
+	    end
+
+	    if v['priority_num'] <= load_state.min_priority then
 	       -- Note that we can overwrite rules, but the rules are still
 	       -- loaded in the order in which they first appeared,
 	       -- potentially across multiple files.
@@ -334,11 +446,81 @@ function load_rules(rules_content, rules_mgr, verbose, all_events, extra, replac
 	    end
 	 end
       else
-	 error ("Unknown rule object: "..table.tostring(v))
+	 -- Remove the context from the table, so the table is exactly what was parsed
+	 local context = v['context']
+	 v['context'] = nil
+	 return false, build_error_with_context(context, "Unknown rule object: "..table.tostring(v))
       end
    end
 
-   -- We've now loaded all the rules, macros, and list. Now
+   return true, ""
+end
+
+function load_rules(sinsp_lua_parser,
+		    json_lua_parser,
+		    rules_content,
+		    rules_mgr,
+		    verbose,
+		    all_events,
+		    extra,
+		    replace_container_info,
+		    min_priority)
+
+   local load_state = {lines={}, indices={}, cur_item_idx=0, min_priority=min_priority, required_engine_version=0}
+
+   load_state.lines, load_state.indices = split_lines(rules_content)
+
+   local status, docs = pcall(yaml.load, rules_content, { all = true })
+
+   if status == false then
+      local pat = "^([%d]+):([%d]+): "
+      -- docs is actually an error string
+
+      local row = 0
+      local col = 0
+
+      row, col = string.match(docs, pat)
+      if row ~= nil and col ~= nil then
+	 docs = string.gsub(docs, pat, "")
+      end
+
+      row = tonumber(row)
+      col = tonumber(col)
+
+      return false, build_error(load_state.lines, row, 3, docs)
+   end
+
+   if docs == nil then
+      -- An empty rules file is acceptable
+      return true, load_state.required_engine_version
+   end
+
+   if type(docs) ~= "table" then
+      return false, build_error(load_state.lines, 1, 1, "Rules content is not yaml")
+   end
+
+   for docidx, doc in ipairs(docs) do
+
+      if type(doc) ~= "table" then
+	 return false, build_error(load_state.lines, 1, 1, "Rules content is not yaml")
+      end
+
+      -- Look for non-numeric indices--implies that document is not array
+      -- of objects.
+      for key, val in pairs(doc) do
+	 if type(key) ~= "number" then
+	    return false, build_error(load_state.lines, 1, 1, "Rules content is not yaml array of objects")
+	 end
+      end
+
+      res, errstr = load_rules_doc(rules_mgr, doc, load_state)
+
+      if not res then
+	 return res, errstr
+      end
+   end
+
+   -- We've now loaded all the rules, macros, and lists. Now
    -- compile/expand the rules, macros, and lists. We use
    -- ordered_rule_{lists,macros,names} to compile them in the order
    -- in which they appeared in the file(s).
@@ -367,15 +549,26 @@ function load_rules(rules_content, rules_mgr, verbose, all_events, extra, replac
       state.lists[v['list']] = {["items"] = items, ["used"] = false}
    end
 
-   for i, name in ipairs(state.ordered_macro_names) do
+   for _, name in ipairs(state.ordered_macro_names) do
 
       local v = state.macros_by_name[name]
 
-      local ast = compiler.compile_macro(v['condition'], state.macros, state.lists)
+      local status, ast = compiler.compile_macro(v['condition'], state.macros, state.lists)
+
+      if status == false then
+	 return false, build_error_with_context(v['context'], ast)
+      end
+
+      if v['source'] == "syscall" then
+	 if not all_events then
+	    sinsp_rule_utils.check_for_ignored_syscalls_events(ast, 'macro', v['condition'])
+	 end
+      end
+
       state.macros[v['macro']] = {["ast"] = ast.filter.value, ["used"] = false}
    end
 
-   for i, name in ipairs(state.ordered_rule_names) do
+   for _, name in ipairs(state.ordered_rule_names) do
 
       local v = state.rules_by_name[name]
 
@@ -384,9 +577,23 @@ function load_rules(rules_content, rules_mgr, verbose, all_events, extra, replac
 	 warn_evttypes = v['warn_evttypes']
       end
 
-      local filter_ast, evttypes, syscallnums, filters = compiler.compile_filter(v['rule'], v['condition'],
-										 state.macros, state.lists,
-										 warn_evttypes)
+      local status, filter_ast, filters = compiler.compile_filter(v['rule'], v['condition'],
+								  state.macros, state.lists)
+
+      if status == false then
+	 return false, build_error_with_context(v['context'], filter_ast)
+      end
+
+      local evtttypes = {}
+      local syscallnums = {}
+
+      if v['source'] == "syscall" then
+	 if not all_events then
+	    sinsp_rule_utils.check_for_ignored_syscalls_events(filter_ast, 'rule', v['rule'])
+	 end
+
+	 evttypes, syscallnums = sinsp_rule_utils.get_evttypes_syscalls(name, filter_ast, v['condition'], warn_evttypes, verbose)
+      end
 
       -- If a filter in the rule doesn't exist, either skip the rule
       -- or raise an error, depending on the value of
@@ -394,10 +601,32 @@ function load_rules(rules_content, rules_mgr, verbose, all_events, extra, replac
       for filter, _ in pairs(filters) do
 	 found = false
 
-	 for pat, _ in pairs(defined_filters) do
-	    if string.match(filter, pat) ~= nil then
-	       found = true
-	       break
+	 if defined_noarg_filters[filter] ~= nil then
+	    found = true
+	 else
+	    bracket_idx = string.find(filter, "[", 1, true)
+
+	    if bracket_idx ~= nil then
+	       subfilter = string.sub(filter, 1, bracket_idx-1)
+
+	       if defined_arg_filters[subfilter] ~= nil then
+		  found = true
+	       end
+	    end
+
+	    if not found then
+	       dot_idx = string.find(filter, ".", 1, true)
+
+	       while dot_idx ~= nil do
+		  subfilter = string.sub(filter, 1, dot_idx-1)
+
+		  if defined_arg_filters[subfilter] ~= nil then
+		     found = true
+		     break
+		  end
+
+		  dot_idx = string.find(filter, ".", dot_idx+1, true)
+	       end
 	    end
 	 end
 
@@ -425,14 +654,19 @@ function load_rules(rules_content, rules_mgr, verbose, all_events, extra, replac
 	 -- event.
 	 mark_relational_nodes(filter_ast.filter.value, state.n_rules)
 
-	 install_filter(filter_ast.filter.value)
-
 	 if (v['tags'] == nil) then
 	    v['tags'] = {}
 	 end
+	 if v['source'] == "syscall" then
+	    install_filter(filter_ast.filter.value, filter, sinsp_lua_parser)
+	    -- Pass the filter and event types back up
+	    falco_rules.add_filter(rules_mgr, v['rule'], evttypes, syscallnums, v['tags'])
 
-	 -- Pass the filter and event types back up
-	 falco_rules.add_filter(rules_mgr, v['rule'], evttypes, syscallnums, v['tags'])
+	 elseif v['source'] == "k8s_audit" then
+	    install_filter(filter_ast.filter.value, k8s_audit_filter, json_lua_parser)
+
+	    falco_rules.add_k8s_audit_filter(rules_mgr, v['rule'], v['tags'])
+	 end
 
 	 -- Rule ASTs are merged together into one big AST, with "OR" between each
 	 -- rule.
@@ -456,34 +690,36 @@ function load_rules(rules_content, rules_mgr, verbose, all_events, extra, replac
 	 -- If the format string contains %container.info, replace it
 	 -- with extra. Otherwise, add extra onto the end of the format
 	 -- string.
-	 if string.find(v['output'], "%container.info", nil, true) ~= nil then
+	 if v['source'] == "syscall" then
+	    if string.find(v['output'], "%container.info", nil, true) ~= nil then
 
-	    -- There may not be any extra, or we're not supposed
-	    -- to replace it, in which case we use the generic
-	    -- "%container.name (id=%container.id)"
-	    if replace_container_info == false then
-	       v['output'] = string.gsub(v['output'], "%%container.info", "%%container.name (id=%%container.id)")
+	       -- There may not be any extra, or we're not supposed
+	       -- to replace it, in which case we use the generic
+	       -- "%container.name (id=%container.id)"
+	       if replace_container_info == false then
+		  v['output'] = string.gsub(v['output'], "%%container.info", "%%container.name (id=%%container.id)")
+		  if extra ~= "" then
+		     v['output'] = v['output'].." "..extra
+		  end
+	       else
+		  safe_extra = string.gsub(extra, "%%", "%%%%")
+		  v['output'] = string.gsub(v['output'], "%%container.info", safe_extra)
+	       end
+	    else
+	       -- Just add the extra to the end
 	       if extra ~= "" then
 		  v['output'] = v['output'].." "..extra
 	       end
-	    else
-	       safe_extra = string.gsub(extra, "%%", "%%%%")
-	       v['output'] = string.gsub(v['output'], "%%container.info", safe_extra)
-	    end
-	 else
-	    -- Just add the extra to the end
-	    if extra ~= "" then
-	       v['output'] = v['output'].." "..extra
 	    end
 	 end
 
 	 -- Ensure that the output field is properly formatted by
 	 -- creating a formatter from it. Any error will be thrown
 	 -- up to the top level.
-	 formatter = formats.formatter(v['output'])
-	 formats.free_formatter(formatter)
+	 formatter = formats.formatter(v['source'], v['output'])
+	 formats.free_formatter(v['source'], formatter)
       else
-	 error ("Unexpected type in load_rule: "..filter_ast.type)
+	 return false, build_error_with_context(v['context'], "Unexpected type in load_rule: "..filter_ast.type)
       end
 
       ::next_rule::
@@ -505,6 +741,8 @@ function load_rules(rules_content, rules_mgr, verbose, all_events, extra, replac
    end
 
    io.flush()
+
+   return true, load_state.required_engine_version
 end
 
 local rule_fmt = "%-50s %s"
@@ -557,7 +795,7 @@ end
 
 local rule_output_counts = {total=0, by_priority={}, by_name={}}
 
-function on_event(evt_, rule_id)
+function on_event(rule_id)
 
    if state.rules_by_idx[rule_id] == nil then
       error ("rule_loader.on_event(): event with invalid rule_id: ", rule_id)

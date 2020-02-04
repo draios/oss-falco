@@ -1,25 +1,24 @@
 /*
-Copyright (C) 2016 Draios inc.
+Copyright (C) 2019 The Falco Authors.
 
-This file is part of falco.
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-falco is free software; you can redistribute it and/or modify
-it under the terms of the GNU General Public License version 2 as
-published by the Free Software Foundation.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-falco is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with falco.  If not, see <http://www.gnu.org/licenses/>.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
 
 #include <fstream>
 
 #include "config_falco_engine.h"
 #include "falco_common.h"
+#include "banned.h"
 
 std::vector<std::string> falco_common::priority_names = {
 	"Emergency",
@@ -54,7 +53,7 @@ void falco_common::set_inspector(sinsp *inspector)
 	m_inspector = inspector;
 }
 
-void falco_common::init(const char *lua_main_filename, const char *source_dir)
+void falco_common::init(const char *lua_main_filename, const char *alternate_lua_dir)
 {
 	ifstream is;
 	string lua_dir = FALCO_ENGINE_LUA_DIR;
@@ -63,7 +62,7 @@ void falco_common::init(const char *lua_main_filename, const char *source_dir)
 	is.open(lua_main_path);
 	if (!is.is_open())
 	{
-		lua_dir = source_dir;
+		lua_dir = alternate_lua_dir;
 		lua_main_path = lua_dir + lua_main_filename;
 
 		is.open(lua_main_path);
@@ -71,7 +70,7 @@ void falco_common::init(const char *lua_main_filename, const char *source_dir)
 		{
 			throw falco_exception("Could not find Falco Lua entrypoint (tried " +
 					      string(FALCO_ENGINE_LUA_DIR) + lua_main_filename + ", " +
-					      string(source_dir) + lua_main_filename + ")");
+					      string(alternate_lua_dir) + lua_main_filename + ")");
 		}
 	}
 
@@ -119,4 +118,3 @@ void falco_common::add_lua_path(string &path)
 
 	lua_pop(m_ls, 1);
 }
-

@@ -1,19 +1,17 @@
 /*
-Copyright (C) 2016 Draios inc.
+Copyright (C) 2019 The Falco Authors.
 
-This file is part of falco.
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-falco is free software; you can redistribute it and/or modify
-it under the terms of the GNU General Public License version 2 as
-published by the Free Software Foundation.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-falco is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with falco.  If not, see <http://www.gnu.org/licenses/>.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
 
 #pragma once
@@ -25,8 +23,10 @@ along with falco.  If not, see <http://www.gnu.org/licenses/>.
 #include <string>
 #include <vector>
 #include <list>
+#include <set>
 #include <iostream>
 
+#include "event_drops.h"
 #include "falco_outputs.h"
 
 class yaml_configuration
@@ -42,12 +42,12 @@ public:
 		{
 			m_root = YAML::LoadFile(path);
 		}
-		catch (const YAML::BadFile& ex)
+		catch(const YAML::BadFile& ex)
 		{
 			std::cerr << "Error reading config file (" + path + "): " + ex.what() + "\n";
 			throw;
 		}
-		catch (const YAML::ParserException& ex)
+		catch(const YAML::ParserException& ex)
 		{
 			std::cerr << "Cannot read config file (" + path + "): " + ex.what() + "\n";
 			throw;
@@ -63,11 +63,12 @@ public:
 		try
 		{
 			auto node = m_root[key];
-			if (node.IsDefined())
+			if(node.IsDefined())
 			{
 				return node.as<T>();
 			}
-		} catch (const YAML::BadConversion& ex)
+		}
+		catch(const YAML::BadConversion& ex)
 		{
 			std::cerr << "Cannot read config file (" + m_path + "): wrong type at key " + key + "\n";
 			throw;
@@ -80,10 +81,10 @@ public:
 	 * Set the top-level node identified by key to value
 	 */
 	template<typename T>
-	void set_scalar(const std::string &key, const T& value)
+	void set_scalar(const std::string& key, const T& value)
 	{
 		auto node = m_root;
-		if (node.IsDefined())
+		if(node.IsDefined())
 		{
 			node[key] = value;
 		}
@@ -103,12 +104,12 @@ public:
 		try
 		{
 			auto node = m_root[key][subkey];
-			if (node.IsDefined())
+			if(node.IsDefined())
 			{
 				return node.as<T>();
 			}
 		}
-		catch (const YAML::BadConversion& ex)
+		catch(const YAML::BadConversion& ex)
 		{
 			std::cerr << "Cannot read config file (" + m_path + "): wrong type at key " + key + "\n";
 			throw;
@@ -124,30 +125,55 @@ public:
 	void set_scalar(const std::string& key, const std::string& subkey, const T& value)
 	{
 		auto node = m_root;
-		if (node.IsDefined())
+		if(node.IsDefined())
 		{
 			node[key][subkey] = value;
 		}
 	}
 
 	// called with the last variadic arg (where the sequence is expected to be found)
-	template <typename T>
-	void get_sequence(T& ret, const std::string& name)
+	template<typename T>
+	void get_sequence_from_node(T& ret, const YAML::Node& node)
 	{
-		YAML::Node child_node = m_root[name];
-		if(child_node.IsDefined())
+		if(node.IsDefined())
 		{
-			if(child_node.IsSequence())
+			if(node.IsSequence())
 			{
-				for(const YAML::Node& item : child_node)
+				for(const YAML::Node& item : node)
 				{
 					ret.insert(ret.end(), item.as<typename T::value_type>());
 				}
 			}
-			else if(child_node.IsScalar())
+			else if(node.IsScalar())
 			{
-				ret.insert(ret.end(), child_node.as<typename T::value_type>());
+				ret.insert(ret.end(), node.as<typename T::value_type>());
 			}
+		}
+	}
+
+	// called with the last variadic arg (where the sequence is expected to be found)
+	template<typename T>
+	void get_sequence(T& ret, const std::string& name)
+	{
+		return get_sequence_from_node<T>(ret, m_root[name]);
+	}
+
+	// called with the last variadic arg (where the sequence is expected to be found)
+	template<typename T>
+	void get_sequence(T& ret, const std::string& key, const std::string& subkey)
+	{
+		try
+		{
+			auto node = m_root[key];
+			if(node.IsDefined())
+			{
+				return get_sequence_from_node<T>(ret, node[subkey]);
+			}
+		}
+		catch(const YAML::BadConversion& ex)
+		{
+			std::cerr << "Cannot read config file (" + m_path + "): wrong type at key " + key + "\n";
+			throw;
 		}
 	}
 
@@ -155,17 +181,16 @@ private:
 	YAML::Node m_root;
 };
 
-
 class falco_configuration
 {
- public:
+public:
 	falco_configuration();
 	virtual ~falco_configuration();
 
-	void init(std::string conf_filename, std::list<std::string> &cmdline_options);
-	void init(std::list<std::string> &cmdline_options);
+	void init(std::string conf_filename, std::list<std::string>& cmdline_options);
+	void init(std::list<std::string>& cmdline_options);
 
-	static void read_rules_file_directory(const string &path, list<string> &rules_filenames);
+	static void read_rules_file_directory(const string& path, list<string>& rules_filenames);
 
 	std::list<std::string> m_rules_filenames;
 	bool m_json_output;
@@ -177,8 +202,29 @@ class falco_configuration
 	falco_common::priority_type m_min_priority;
 
 	bool m_buffered_outputs;
- private:
-	void init_cmdline_options(std::list<std::string> &cmdline_options);
+	bool m_time_format_iso_8601;
+
+	bool m_grpc_enabled;
+	int m_grpc_threadiness;
+	std::string m_grpc_bind_address;
+	std::string m_grpc_private_key;
+	std::string m_grpc_cert_chain;
+	std::string m_grpc_root_certs;
+
+	bool m_webserver_enabled;
+	uint32_t m_webserver_listen_port;
+	std::string m_webserver_k8s_audit_endpoint;
+	bool m_webserver_ssl_enabled;
+	std::string m_webserver_ssl_certificate;
+	std::set<syscall_evt_drop_mgr::action> m_syscall_evt_drop_actions;
+	double m_syscall_evt_drop_rate;
+	double m_syscall_evt_drop_max_burst;
+
+	// Only used for testing
+	bool m_syscall_evt_simulate_drops;
+
+private:
+	void init_cmdline_options(std::list<std::string>& cmdline_options);
 
 	/**
 	 * Given a <key>=<value> specifier, set the appropriate option
@@ -186,8 +232,7 @@ class falco_configuration
 	 * characters for nesting. Currently only 1- or 2- level keys
 	 * are supported and only scalar values are supported.
 	 */
-	void set_cmdline_option(const std::string &spec);
+	void set_cmdline_option(const std::string& spec);
 
 	yaml_configuration* m_config;
 };
-

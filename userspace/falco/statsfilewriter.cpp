@@ -1,7 +1,24 @@
+/*
+Copyright (C) 2019 The Falco Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 #include <sys/time.h>
 #include <signal.h>
 
 #include "statsfilewriter.h"
+#include "banned.h"
 
 using namespace std;
 
@@ -23,7 +40,7 @@ StatsFileWriter::~StatsFileWriter()
 	m_output.close();
 }
 
-bool StatsFileWriter::init(sinsp *inspector, string &filename, uint32_t interval_sec, string &errstr)
+bool StatsFileWriter::init(sinsp *inspector, string &filename, uint32_t interval_msec, string &errstr)
 {
 	struct itimerval timer;
 	struct sigaction handler;
@@ -41,8 +58,8 @@ bool StatsFileWriter::init(sinsp *inspector, string &filename, uint32_t interval
 		return false;
 	}
 
-	timer.it_value.tv_sec = interval_sec;
-	timer.it_value.tv_usec = 0;
+	timer.it_value.tv_sec = 0;
+	timer.it_value.tv_usec = interval_msec * 1000;
 	timer.it_interval = timer.it_value;
 	if (setitimer(ITIMER_REAL, &timer, NULL) == -1)
 	{

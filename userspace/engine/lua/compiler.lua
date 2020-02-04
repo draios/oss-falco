@@ -1,35 +1,21 @@
+-- Copyright (C) 2019 The Falco Authors.
 --
--- Copyright (C) 2016 Draios inc.
+-- Licensed under the Apache License, Version 2.0 (the "License");
+-- you may not use this file except in compliance with the License.
+-- You may obtain a copy of the License at
 --
--- This file is part of falco.
+--     http://www.apache.org/licenses/LICENSE-2.0
 --
--- falco is free software; you can redistribute it and/or modify
--- it under the terms of the GNU General Public License version 2 as
--- published by the Free Software Foundation.
---
--- falco is distributed in the hope that it will be useful,
--- but WITHOUT ANY WARRANTY; without even the implied warranty of
--- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
--- GNU General Public License for more details.
---
--- You should have received a copy of the GNU General Public License
--- along with falco.  If not, see <http://www.gnu.org/licenses/>.
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS,
+-- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-- See the License for the specific language governing permissions and
+-- limitations under the License.
 
 local parser = require("parser")
 local compiler = {}
 
-compiler.verbose = false
-compiler.all_events = false
 compiler.trim = parser.trim
-
-function compiler.set_verbose(verbose)
-   compiler.verbose = verbose
-   parser.set_verbose(verbose)
-end
-
-function compiler.set_all_events(all_events)
-   compiler.all_events = all_events
-end
 
 function map(f, arr)
    local res = {}
@@ -74,12 +60,12 @@ function expand_macros(ast, defs, changed)
    elseif ast.type == "Filter" then
       if (ast.value.type == "Macro") then
          if (defs[ast.value.value] == nil) then
-            error("Undefined macro '".. ast.value.value .. "' used in filter.")
+	    return false, "Undefined macro '".. ast.value.value .. "' used in filter."
          end
 	 defs[ast.value.value].used = true
          ast.value = copy_ast_obj(defs[ast.value.value].ast)
          changed = true
-	 return changed
+	 return true, changed
       end
       return expand_macros(ast.value, defs, changed)
 
@@ -87,7 +73,7 @@ function expand_macros(ast, defs, changed)
 
       if (ast.left.type == "Macro") then
          if (defs[ast.left.value] == nil) then
-            error("Undefined macro '".. ast.left.value .. "' used in filter.")
+	    return false, "Undefined macro '".. ast.left.value .. "' used in filter."
          end
 	 defs[ast.left.value].used = true
          ast.left = copy_ast_obj(defs[ast.left.value].ast)
@@ -96,21 +82,27 @@ function expand_macros(ast, defs, changed)
 
       if (ast.right.type == "Macro") then
          if (defs[ast.right.value] == nil) then
-            error("Undefined macro ".. ast.right.value .. " used in filter.")
+	    return false, "Undefined macro ".. ast.right.value .. " used in filter."
          end
 	 defs[ast.right.value].used = true
          ast.right = copy_ast_obj(defs[ast.right.value].ast)
          changed = true
       end
 
-      local changed_left = expand_macros(ast.left, defs, false)
-      local changed_right = expand_macros(ast.right, defs, false)
-      return changed or changed_left or changed_right
+      local status, changed_left = expand_macros(ast.left, defs, false)
+      if status == false then
+	 return false, changed_left
+      end
+      local status, changed_right = expand_macros(ast.right, defs, false)
+      if status == false then
+	 return false, changed_right
+      end
+      return true, changed or changed_left or changed_right
 
    elseif ast.type == "UnaryBoolOp" then
       if (ast.argument.type == "Macro") then
          if (defs[ast.argument.value] == nil) then
-            error("Undefined macro ".. ast.argument.value .. " used in filter.")
+	    return false, "Undefined macro ".. ast.argument.value .. " used in filter."
          end
 	 defs[ast.argument.value].used = true
          ast.argument = copy_ast_obj(defs[ast.argument.value].ast)
@@ -118,7 +110,7 @@ function expand_macros(ast, defs, changed)
       end
       return expand_macros(ast.argument, defs, changed)
    end
-   return changed
+   return true, changed
 end
 
 function get_macros(ast, set)
@@ -146,182 +138,6 @@ function get_macros(ast, set)
    return set
 end
 
-function check_for_ignored_syscalls_events(ast, filter_type, source)
-
-   function check_syscall(val)
-      if ignored_syscalls[val] then
-	 error("Ignored syscall \""..val.."\" in "..filter_type..": "..source)
-      end
-
-   end
-
-   function check_event(val)
-      if ignored_events[val] then
-	 error("Ignored event \""..val.."\" in "..filter_type..": "..source)
-      end
-   end
-
-   function cb(node)
-      if node.left.type == "FieldName" and
-	 (node.left.value == "evt.type" or
-	  node.left.value == "syscall.type") then
-
-	    if node.operator == "in" or node.operator == "pmatch" then
-	       for i, v in ipairs(node.right.elements) do
-		  if v.type == "BareString" then
-		     if node.left.value == "evt.type" then
-			check_event(v.value)
-		     else
-			check_syscall(v.value)
-		     end
-		  end
-	       end
-	    else
-	       if node.right.type == "BareString" then
-		  if node.left.value == "evt.type" then
-		     check_event(node.right.value)
-		  else
-		     check_syscall(node.right.value)
-		  end
-	       end
-	    end
-      end
-   end
-
-   parser.traverse_ast(ast, {BinaryRelOp=1}, cb)
-end
-
--- Examine the ast and find the event types/syscalls for which the
--- rule should run. All evt.type references are added as event types
--- up until the first "!=" binary operator or unary not operator. If
--- no event type checks are found afterward in the rule, the rule is
--- considered optimized and is associated with the event type(s).
---
--- Otherwise, the rule is associated with a 'catchall' category and is
--- run for all event types/syscalls. (Also, a warning is printed).
---
-
-function get_evttypes_syscalls(name, ast, source, warn_evttypes)
-
-   local evttypes = {}
-   local syscallnums = {}
-   local evtnames = {}
-   local found_event = false
-   local found_not = false
-   local found_event_after_not = false
-
-   function cb(node)
-     if node.type == "UnaryBoolOp" then
-	if node.operator == "not" then
-	   found_not = true
-	end
-     else
-	 if node.operator == "!=" then
-	    found_not = true
-	 end
-	 if node.left.type == "FieldName" and node.left.value == "evt.type" then
-	    found_event = true
-	    if found_not then
-	       found_event_after_not = true
-	    end
-	    if node.operator == "in" or node.operator == "pmatch" then
-	       for i, v in ipairs(node.right.elements) do
-		  if v.type == "BareString" then
-
-                     -- The event must be a known event
-                     if events[v.value] == nil and syscalls[v.value] == nil then
-                        error("Unknown event/syscall \""..v.value.."\" in filter: "..source)
-                     end
-
-		     evtnames[v.value] = 1
-		     if events[v.value] ~= nil then
-			for id in string.gmatch(events[v.value], "%S+") do
-			   evttypes[id] = 1
-			end
-		     end
-
-		     if syscalls[v.value] ~= nil then
-			for id in string.gmatch(syscalls[v.value], "%S+") do
-			   syscallnums[id] = 1
-			end
-		     end
-		  end
-	       end
-	    else
-	       if node.right.type == "BareString" then
-
-		  -- The event must be a known event
-		  if events[node.right.value] == nil and syscalls[node.right.value] == nil then
-		     error("Unknown event/syscall \""..node.right.value.."\" in filter: "..source)
-		  end
-
-		  evtnames[node.right.value] = 1
-		  if events[node.right.value] ~= nil then
-		     for id in string.gmatch(events[node.right.value], "%S+") do
-			evttypes[id] = 1
-		     end
-		  end
-
-		  if syscalls[node.right.value] ~= nil then
-		     for id in string.gmatch(syscalls[node.right.value], "%S+") do
-			syscallnums[id] = 1
-		     end
-		  end
-	       end
-	    end
-	 end
-      end
-   end
-
-   parser.traverse_ast(ast.filter.value, {BinaryRelOp=1, UnaryBoolOp=1} , cb)
-
-   if not found_event then
-      if warn_evttypes == true then
-	 io.stderr:write("Rule "..name..": warning (no-evttype):\n")
-	 io.stderr:write(source.."\n")
-	 io.stderr:write("         did not contain any evt.type restriction, meaning it will run for all event types.\n")
-	 io.stderr:write("         This has a significant performance penalty. Consider adding an evt.type restriction if possible.\n")
-      end
-      evttypes = {}
-      syscallnums = {}
-      evtnames = {}
-   end
-
-   if found_event_after_not then
-      if warn_evttypes == true then
-	 io.stderr:write("Rule "..name..": warning (trailing-evttype):\n")
-	 io.stderr:write(source.."\n")
-	 io.stderr:write("         does not have all evt.type restrictions at the beginning of the condition,\n")
-	 io.stderr:write("         or uses a negative match (i.e. \"not\"/\"!=\") for some evt.type restriction.\n")
-	 io.stderr:write("         This has a performance penalty, as the rule can not be limited to specific event types.\n")
-	 io.stderr:write("         Consider moving all evt.type restrictions to the beginning of the rule and/or\n")
-	 io.stderr:write("         replacing negative matches with positive matches if possible.\n")
-      end
-      evttypes = {}
-      syscallnums = {}
-      evtnames = {}
-   end
-
-   evtnames_only = {}
-   local num_evtnames = 0
-   for name, dummy in pairs(evtnames) do
-      table.insert(evtnames_only, name)
-      num_evtnames = num_evtnames + 1
-   end
-
-   if num_evtnames == 0 then
-      table.insert(evtnames_only, "all")
-   end
-
-   table.sort(evtnames_only)
-
-   if compiler.verbose then
-      io.stderr:write("Event types/Syscalls for rule "..name..": "..table.concat(evtnames_only, ",").."\n")
-   end
-
-   return evttypes, syscallnums
-end
-
 function get_filters(ast)
 
    local filters = {}
@@ -340,16 +156,35 @@ end
 function compiler.expand_lists_in(source, list_defs)
 
    for name, def in pairs(list_defs) do
-      local begin_name_pat = "^("..name..")([%s(),=])"
-      local mid_name_pat = "([%s(),=])("..name..")([%s(),=])"
-      local end_name_pat = "([%s(),=])("..name..")$"
 
-      source, subcount1 = string.gsub(source, begin_name_pat, table.concat(def.items, ", ").."%2")
-      source, subcount2 = string.gsub(source, mid_name_pat, "%1"..table.concat(def.items, ", ").."%3")
-      source, subcount3 = string.gsub(source, end_name_pat, "%1"..table.concat(def.items, ", "))
+      local bpos = string.find(source, name, 1, true)
 
-      if (subcount1 + subcount2 + subcount3) > 0 then
+      while bpos ~= nil do
 	 def.used = true
+
+	 local epos = bpos + string.len(name)
+
+	 -- The characters surrounding the name must be delimiters of beginning/end of string
+	 if (bpos == 1 or string.match(string.sub(source, bpos-1, bpos-1), "[%s(),=]")) and (epos > string.len(source) or string.match(string.sub(source, epos, epos), "[%s(),=]")) then
+	    new_source = ""
+
+	    if bpos > 1 then
+	       new_source = new_source..string.sub(source, 1, bpos-1)
+	    end
+
+	    sub = table.concat(def.items, ", ")
+
+	    new_source = new_source..sub
+
+	    if epos <= string.len(source) then
+	       new_source = new_source..string.sub(source, epos, string.len(source))
+	    end
+
+	    source = new_source
+	    bpos = bpos + (string.len(sub)-string.len(name))
+	 end
+
+	 bpos = string.find(source, name, bpos+1, true)
       end
    end
 
@@ -364,13 +199,7 @@ function compiler.compile_macro(line, macro_defs, list_defs)
 
    if (error_msg) then
       msg = "Compilation error when compiling \""..line.."\": ".. error_msg
-      error(msg)
-   end
-
-   -- Traverse the ast looking for events/syscalls in the ignored
-   -- syscalls table. If any are found, return an error.
-   if not compiler.all_events then
-      check_for_ignored_syscalls_events(ast, 'macro', line)
+      return false, msg
    end
 
    -- Simply as a validation step, try to expand all macros in this
@@ -381,20 +210,24 @@ function compiler.compile_macro(line, macro_defs, list_defs)
    if (ast.type == "Rule") then
       -- Line is a filter, so expand macro references
       repeat
-	 expanded  = expand_macros(ast_copy, macro_defs, false)
+	 status, expanded = expand_macros(ast_copy, macro_defs, false)
+	 if status == false then
+	    msg = "Compilation error when compiling \""..line.."\": ".. expanded
+	    return false, msg
+	 end
       until expanded == false
 
    else
-      error("Unexpected top-level AST type: "..ast.type)
+      return false, "Unexpected top-level AST type: "..ast.type
    end
 
-   return ast
+   return true, ast
 end
 
 --[[
    Parses a single filter, then expands macros using passed-in table of definitions. Returns resulting AST.
 --]]
-function compiler.compile_filter(name, source, macro_defs, list_defs, warn_evttypes)
+function compiler.compile_filter(name, source, macro_defs, list_defs)
 
    source = compiler.expand_lists_in(source, list_defs)
 
@@ -402,30 +235,25 @@ function compiler.compile_filter(name, source, macro_defs, list_defs, warn_evtty
 
    if (error_msg) then
       msg = "Compilation error when compiling \""..source.."\": "..error_msg
-      error(msg)
-   end
-
-   -- Traverse the ast looking for events/syscalls in the ignored
-   -- syscalls table. If any are found, return an error.
-   if not compiler.all_events then
-      check_for_ignored_syscalls_events(ast, 'rule', source)
+      return false, msg
    end
 
    if (ast.type == "Rule") then
       -- Line is a filter, so expand macro references
       repeat
-	 expanded  = expand_macros(ast, macro_defs, false)
+	 status, expanded  = expand_macros(ast, macro_defs, false)
+	 if status == false then
+	    return false, expanded
+	 end
       until expanded == false
 
    else
-      error("Unexpected top-level AST type: "..ast.type)
+      return false, "Unexpected top-level AST type: "..ast.type
    end
-
-   evttypes, syscallnums = get_evttypes_syscalls(name, ast, source, warn_evttypes)
 
    filters = get_filters(ast)
 
-   return ast, evttypes, syscallnums, filters
+   return true, ast, filters
 end
 
 

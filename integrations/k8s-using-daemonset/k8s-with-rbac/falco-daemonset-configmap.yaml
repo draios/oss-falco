@@ -1,30 +1,39 @@
 apiVersion: extensions/v1beta1
 kind: DaemonSet
 metadata:
-  name: falco
+  name: falco-daemonset
   labels:
-    name: falco-daemonset
-    app: demo
+    app: falco-example
+    role: security
 spec:
   template:
     metadata:
       labels:
-        name: falco
-        app: demo
+        app: falco-example
         role: security
     spec:
       serviceAccount: falco-account
       containers:
         - name: falco
-          image: sysdig/falco:latest
+          image: falcosecurity/falco:latest
           securityContext:
             privileged: true
-          args: [ "/usr/bin/falco", "-K", "/var/run/secrets/kubernetes.io/serviceaccount/token", "-k", "https://kubernetes.default", "-pk"]
+# Uncomment the 3 lines below to enable eBPF support for Falco.
+# This allows Falco to run on Google COS.
+# Leave blank for the default probe location, or set to the path
+# of a precompiled probe.
+#          env:
+#          - name: BPF_PROBE
+#            value: ""
+          args: [ "/usr/bin/falco", "--cri", "/host/run/containerd/containerd.sock", "-K", "/var/run/secrets/kubernetes.io/serviceaccount/token", "-k", "https://$(KUBERNETES_SERVICE_HOST)", "-pk"]
           volumeMounts:
             - mountPath: /host/var/run/docker.sock
               name: docker-socket
+            - mountPath: /host/run/containerd/containerd.sock
+              name: containerd-socket
             - mountPath: /host/dev
               name: dev-fs
+              readOnly: true
             - mountPath: /host/proc
               name: proc-fs
               readOnly: true
@@ -37,12 +46,18 @@ spec:
             - mountPath: /host/usr
               name: usr-fs
               readOnly: true
+            - mountPath: /host/etc/
+              name: etc-fs
+              readOnly: true
             - mountPath: /etc/falco
               name: falco-config
       volumes:
         - name: docker-socket
           hostPath:
             path: /var/run/docker.sock
+        - name: containerd-socket
+          hostPath:
+            path: /run/containerd/containerd.sock
         - name: dev-fs
           hostPath:
             path: /dev
@@ -58,6 +73,9 @@ spec:
         - name: usr-fs
           hostPath:
             path: /usr
+        - name: etc-fs
+          hostPath:
+            path: /etc
         - name: falco-config
           configMap:
             name: falco-config

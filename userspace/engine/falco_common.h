@@ -1,25 +1,24 @@
 /*
-Copyright (C) 2016 Draios inc.
+Copyright (C) 2019 The Falco Authors.
 
-This file is part of falco.
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-falco is free software; you can redistribute it and/or modify
-it under the terms of the GNU General Public License version 2 as
-published by the Free Software Foundation.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-falco is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with falco.  If not, see <http://www.gnu.org/licenses/>.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
 
 #pragma once
 
 #include <string>
 #include <exception>
+#include <mutex>
 
 extern "C" {
 #include "lua.h"
@@ -70,11 +69,11 @@ public:
 	falco_common();
 	virtual ~falco_common();
 
-	void init(const char *lua_main_filename, const char *source_dir);
+	void init(const char *lua_main_filename, const char *alternate_lua_dir);
 
 	void set_inspector(sinsp *inspector);
 
-        // Priority levels, as a vector of strings
+    // Priority levels, as a vector of strings
 	static std::vector<std::string> priority_names;
 
 	// Same as numbers/indices into the above vector
@@ -93,11 +92,10 @@ public:
 protected:
 	lua_State *m_ls;
 
+	std::mutex m_ls_semaphore;
+
 	sinsp *m_inspector;
 
 private:
 	void add_lua_path(std::string &path);
 };
-
-
-

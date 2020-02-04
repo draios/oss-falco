@@ -1,37 +1,21 @@
+#
+# Copyright (C) 2016-2018 The Falco Authors..
+#
+# This file is part of falco.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
 trace_files: !mux
-
-  docker_package:
-    package: docker:sysdig/falco:test
-    detect: True
-    detect_level: WARNING
-    rules_file: /host/rules/rule_names_with_spaces.yaml
-    trace_file: /host/traces/cat_write.scap
-    conf_file: /host/conf/falco.yaml
-
-  # This uses a volume mount to overwrite and prevent /usr/sbin/dkms
-  # from being run. As a result, it will force falco-probe-loader to
-  # fall back to loading the driver from ~/.sysdig. Setting
-  # copy_local_driver to True copied the driver to ~/.sysdig, so it
-  # will be available. In this case, we're running live for 5 seconds
-  # just to see if falco can load the driver.
-
-  docker_package_local_driver:
-    package: docker:sysdig/falco:test
-    addl_docker_run_args: -v /dev/null:/usr/sbin/dkms
-    copy_local_driver: True
-    detect: False
-    detect_level: WARNING
-    rules_file: /host/rules/tagged_rules.yaml
-    conf_file: /host/conf/falco.yaml
-    run_duration: 5
-
-  debian_package:
-    package: falco*.deb
-    detect: True
-    detect_level: WARNING
-    rules_file:
-      - rules/rule_names_with_spaces.yaml
-    trace_file: trace_files/cat_write.scap
 
   builtin_rules_no_warnings:
     detect: False
@@ -102,6 +86,15 @@ trace_files: !mux
       - rules/rule_names_with_spaces.yaml
     trace_file: trace_files/cat_write.scap
 
+  rule_names_with_regex_chars:
+    detect: True
+    detect_level: WARNING
+    rules_file:
+      - rules/rule_names_with_regex_chars.yaml
+    detect_counts:
+      - 'Open From Cat ($\.*+?()[]{}|^)': 8
+    trace_file: trace_files/cat_write.scap
+
   multiple_rules_first_empty:
     detect: True
     detect_level: WARNING
@@ -119,6 +112,18 @@ trace_files: !mux
     trace_file: trace_files/cat_write.scap
 
   multiple_rules:
+    detect: True
+    detect_level:
+      - WARNING
+      - INFO
+      - ERROR
+    rules_file:
+      - rules/single_rule.yaml
+      - rules/double_rule.yaml
+    trace_file: trace_files/cat_write.scap
+    all_events: True
+
+  multiple_docs:
     detect: True
     detect_level:
       - WARNING
@@ -247,6 +252,348 @@ trace_files: !mux
       - rules/rule_order.yaml
     trace_file: trace_files/cat_write.scap
 
+  endswith:
+    detect: True
+    detect_level: WARNING
+    rules_file:
+      - rules/endswith.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_not_yaml:
+    exit_status: 1
+    stdout_is: |+
+      Rules content is not yaml
+      ---
+      This is not yaml
+      ---
+    validate_rules_file:
+      - rules/invalid_not_yaml.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_not_array:
+    exit_status: 1
+    stdout_is: |+
+      Rules content is not yaml array of objects
+      ---
+      foo: bar
+      ---
+    validate_rules_file:
+      - rules/invalid_not_array.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_array_item_not_object:
+    exit_status: 1
+    stdout_is: |+
+      Unexpected element of type string. Each element should be a yaml associative array.
+      ---
+      - foo
+      ---
+    validate_rules_file:
+      - rules/invalid_array_item_not_object.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_unexpected object:
+    exit_status: 1
+    stdout_is: |+
+      Unknown rule object: {foo="bar"}
+      ---
+      - foo: bar
+      ---
+    validate_rules_file:
+      - rules/invalid_unexpected_object.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_engine_version_not_number:
+    exit_status: 1
+    stdout_is: |+
+      Value of required_engine_version must be a number
+      ---
+      - required_engine_version: not-a-number
+      ---
+    validate_rules_file:
+      - rules/invalid_engine_version_not_number.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_yaml_parse_error:
+    exit_status: 1
+    stdout_is: |+
+      mapping values are not allowed in this context
+      ---
+      this : is : not : yaml
+      ---
+    validate_rules_file:
+      - rules/invalid_yaml_parse_error.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_list_without_items:
+    exit_status: 1
+    stdout_is: |+
+      List must have property items
+      ---
+      - list: bad_list
+        no_items: foo
+      ---
+    validate_rules_file:
+      - rules/invalid_list_without_items.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_macro_without_condition:
+    exit_status: 1
+    stdout_is: |+
+      Macro must have property condition
+      ---
+      - macro: bad_macro
+        nope: 1
+      ---
+    validate_rules_file:
+      - rules/invalid_macro_without_condition.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_rule_without_output:
+    exit_status: 1
+    stdout_is: |+
+      Rule must have property output
+      ---
+      - rule: no output rule
+        desc: some desc
+        condition: evt.type=fork
+        priority: INFO
+      ---
+    validate_rules_file:
+      - rules/invalid_rule_without_output.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_append_rule_without_condition:
+    exit_status: 1
+    stdout_is: |+
+      Rule must have property condition
+      ---
+      - rule: no condition rule
+        append: true
+      ---
+    validate_rules_file:
+      - rules/invalid_append_rule_without_condition.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_append_macro_dangling:
+    exit_status: 1
+    stdout_is: |+
+      Macro dangling append has 'append' key but no macro by that name already exists
+      ---
+      - macro: dangling append
+        condition: and evt.type=execve
+        append: true
+      ---
+    validate_rules_file:
+      - rules/invalid_append_macro_dangling.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_list_append_dangling:
+    exit_status: 1
+    stdout_is: |+
+      List my_list has 'append' key but no list by that name already exists
+      ---
+      - list: my_list
+        items: [not-cat]
+        append: true
+      ---
+    validate_rules_file:
+      - rules/list_append_failure.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_rule_append_dangling:
+    exit_status: 1
+    stdout_is: |+
+      Rule my_rule has 'append' key but no rule by that name already exists
+      ---
+      - rule: my_rule
+        condition: evt.type=open
+        append: true
+      ---
+    validate_rules_file:
+      - rules/rule_append_failure.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_overwrite_macro:
+    exit_status: 1
+    stdout_contains: |+
+      .*invalid_base_macro.yaml: Ok
+      .*invalid_overwrite_macro.yaml: Compilation error when compiling "foo": Undefined macro 'foo' used in filter.
+      ---
+      - macro: some macro
+        condition: foo
+        append: false
+      ---
+    validate_rules_file:
+      - rules/invalid_base_macro.yaml
+      - rules/invalid_overwrite_macro.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_append_macro:
+    exit_status: 1
+    stdout_contains: |+
+      .*invalid_base_macro.yaml: Ok
+      .*invalid_append_macro.yaml: Compilation error when compiling "evt.type=execve foo": 17: syntax error, unexpected 'foo', expecting 'or', 'and'
+      ---
+      - macro: some macro
+        condition: evt.type=execve
+
+      - macro: some macro
+        condition: foo
+        append: true
+      ---
+    validate_rules_file:
+      - rules/invalid_base_macro.yaml
+      - rules/invalid_append_macro.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_overwrite_macro_multiple_docs:
+    exit_status: 1
+    stdout_is: |+
+      Compilation error when compiling "foo": Undefined macro 'foo' used in filter.
+      ---
+      - macro: some macro
+        condition: foo
+        append: false
+      ---
+    validate_rules_file:
+      - rules/invalid_overwrite_macro_multiple_docs.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_append_macro_multiple_docs:
+    exit_status: 1
+    stdout_is: |+
+      Compilation error when compiling "evt.type=execve foo": 17: syntax error, unexpected 'foo', expecting 'or', 'and'
+      ---
+      - macro: some macro
+        condition: evt.type=execve
+
+      - macro: some macro
+        condition: foo
+        append: true
+      ---
+    validate_rules_file:
+      - rules/invalid_append_macro_multiple_docs.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_overwrite_rule:
+    exit_status: 1
+    stdout_contains: |+
+      .*invalid_base_rule.yaml: Ok
+      .*invalid_overwrite_rule.yaml: Undefined macro 'bar' used in filter.
+      ---
+      - rule: some rule
+        desc: some desc
+        condition: bar
+        output: some output
+        priority: INFO
+        append: false
+      ---
+    validate_rules_file:
+      - rules/invalid_base_rule.yaml
+      - rules/invalid_overwrite_rule.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_append_rule:
+    exit_status: 1
+    stdout_contains: |+
+      .*invalid_base_rule.yaml: Ok
+      .*invalid_append_rule.yaml: Compilation error when compiling "evt.type=open bar": 15: syntax error, unexpected 'bar', expecting 'or', 'and'
+      ---
+      - rule: some rule
+        desc: some desc
+        condition: evt.type=open
+        output: some output
+        priority: INFO
+
+      - rule: some rule
+        desc: some desc
+        condition: bar
+        output: some output
+        priority: INFO
+        append: true
+      ---
+    validate_rules_file:
+      - rules/invalid_base_rule.yaml
+      - rules/invalid_append_rule.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_overwrite_rule_multiple_docs:
+    exit_status: 1
+    stdout_is: |+
+      Undefined macro 'bar' used in filter.
+      ---
+      - rule: some rule
+        desc: some desc
+        condition: bar
+        output: some output
+        priority: INFO
+        append: false
+      ---
+    validate_rules_file:
+      - rules/invalid_overwrite_rule_multiple_docs.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_append_rule_multiple_docs:
+    exit_status: 1
+    stdout_contains: |+
+      Compilation error when compiling "evt.type=open bar": 15: syntax error, unexpected 'bar', expecting 'or', 'and'
+      ---
+      - rule: some rule
+        desc: some desc
+        condition: evt.type=open
+        output: some output
+        priority: INFO
+
+      - rule: some rule
+        desc: some desc
+        condition: bar
+        output: some output
+        priority: INFO
+        append: true
+      ---
+    validate_rules_file:
+      - rules/invalid_append_rule_multiple_docs.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_missing_rule_name:
+    exit_status: 1
+    stdout_is: |+
+      Rule name is empty
+      ---
+      - rule:
+        desc: some desc
+        condition: evt.type=execve
+        output: some output
+      ---
+    validate_rules_file:
+      - rules/invalid_missing_rule_name.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_missing_list_name:
+    exit_status: 1
+    stdout_is: |+
+      List name is empty
+      ---
+      - list:
+        items: [foo]
+      ---
+    validate_rules_file:
+      - rules/invalid_missing_list_name.yaml
+    trace_file: trace_files/cat_write.scap
+
+  invalid_missing_macro_name:
+    exit_status: 1
+    stdout_is: |+
+      Macro name is empty
+      ---
+      - macro:
+        condition: evt.type=execve
+      ---
+    validate_rules_file:
+      - rules/invalid_missing_macro_name.yaml
+    trace_file: trace_files/cat_write.scap
+
   invalid_rule_output:
     exit_status: 1
     stderr_contains: "Runtime error: Error loading rules:.* Invalid output format 'An open was seen %not_a_real_field': 'invalid formatting token not_a_real_field'. Exiting."
@@ -263,13 +610,13 @@ trace_files: !mux
       - open_from_cat
     trace_file: trace_files/cat_write.scap
 
-  disabled_rules_using_regex:
+  disabled_rules_using_substring:
     detect: False
     rules_file:
       - rules/empty_rules.yaml
       - rules/single_rule.yaml
     disabled_rules:
-      - "open.*"
+      - "open_from"
     trace_file: trace_files/cat_write.scap
 
   disabled_rules_using_enabled_flag:
@@ -610,7 +957,7 @@ trace_files: !mux
 
   list_append_failure:
     exit_status: 1
-    stderr_contains: "List my_list has 'append' key but no list by that name already exists. Exiting"
+    stderr_contains: "List my_list has 'append' key but no list by that name already exists"
     rules_file:
       - rules/list_append_failure.yaml
     trace_file: trace_files/cat_write.scap
@@ -630,7 +977,7 @@ trace_files: !mux
 
   macro_append_failure:
     exit_status: 1
-    stderr_contains: "Macro my_macro has 'append' key but no macro by that name already exists. Exiting"
+    stderr_contains: "Macro my_macro has 'append' key but no macro by that name already exists"
     rules_file:
       - rules/macro_append_failure.yaml
     trace_file: trace_files/cat_write.scap
@@ -650,7 +997,7 @@ trace_files: !mux
 
   rule_append_failure:
     exit_status: 1
-    stderr_contains: "Rule my_rule has 'append' key but no rule by that name already exists. Exiting"
+    stderr_contains: "Rule my_rule has 'append' key but no rule by that name already exists"
     rules_file:
       - rules/rule_append_failure.yaml
     trace_file: trace_files/cat_write.scap
@@ -740,3 +1087,88 @@ trace_files: !mux
     rules_file:
       - rules/skip_unknown_unspec.yaml
     trace_file: trace_files/cat_write.scap
+
+  engine_version_mismatch:
+    exit_status: 1
+    stderr_contains: Rules require engine version 9999999, but engine version is
+    rules_file:
+      - rules/engine_version_mismatch.yaml
+    trace_file: trace_files/cat_write.scap
+
+  monitor_syscall_drops_none:
+    exit_status: 0
+    rules_file:
+      - rules/single_rule.yaml
+    conf_file: confs/drops_none.yaml
+    trace_file: trace_files/ping_sendto.scap
+    stderr_not_contains:
+      - "event drop detected: 9 occurrences"
+      - "num times actions taken: 9"
+      - "Falco internal: syscall event drop"
+    stdout_not_contains:
+      - "Falco internal: syscall event drop"
+
+  monitor_syscall_drops_ignore:
+    exit_status: 0
+    rules_file:
+      - rules/single_rule.yaml
+    conf_file: confs/drops_ignore.yaml
+    trace_file: trace_files/ping_sendto.scap
+    stderr_contains:
+      - "event drop detected: 9 occurrences"
+      - "num times actions taken: 9"
+    stderr_not_contains:
+      - "Falco internal: syscall event drop"
+    stdout_not_contains:
+      - "Falco internal: syscall event drop"
+
+  monitor_syscall_drops_log:
+    exit_status: 0
+    rules_file:
+      - rules/single_rule.yaml
+    conf_file: confs/drops_log.yaml
+    trace_file: trace_files/ping_sendto.scap
+    stderr_contains:
+      - "event drop detected: 9 occurrences"
+      - "num times actions taken: 9"
+      - "Falco internal: syscall event drop"
+    stdout_not_contains:
+      - "Falco internal: syscall event drop"
+
+  monitor_syscall_drops_alert:
+    exit_status: 0
+    rules_file:
+      - rules/single_rule.yaml
+    conf_file: confs/drops_alert.yaml
+    trace_file: trace_files/ping_sendto.scap
+    stderr_contains:
+      - "event drop detected: 9 occurrences"
+      - "num times actions taken: 9"
+    stderr_not_contains:
+      - "Falco internal: syscall event drop"
+    stdout_contains:
+      - "Falco internal: syscall event drop"
+
+  monitor_syscall_drops_exit:
+    exit_status: 1
+    rules_file:
+      - rules/single_rule.yaml
+    conf_file: confs/drops_exit.yaml
+    trace_file: trace_files/ping_sendto.scap
+    stderr_contains:
+      - "event drop detected: 1 occurrences"
+      - "num times actions taken: 1"
+      - "Falco internal: syscall event drop"
+      - "Exiting."
+    stdout_not_contains:
+      - "Falco internal: syscall event drop"
+
+  time_iso_8601:
+    time_iso_8601: true
+    detect: True
+    detect_level: WARNING
+    rules_file:
+      - rules/single_rule.yaml
+    trace_file: trace_files/cat_write.scap
+    stdout_contains: "2016-08-04T16:17:57.882054739\\+0000: Warning An open was seen"
+    stderr_contains: "^\\d\\d\\d\\d-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d\\+0000"

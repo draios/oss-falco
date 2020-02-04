@@ -1,3 +1,19 @@
+#
+# Copyright (C) 2019 The Falco Authors.
+#
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
 has_json_output: !mux
   yes:
     json_output: True
@@ -17,14 +33,14 @@ traces: !mux
     detect: True
     detect_level: INFO
     detect_counts:
-      - "Launch Privileged Container": 1
+      - "Launch Privileged Container": 3
 
   container-sensitive-mount:
     trace_file: traces-positive/container-sensitive-mount.scap
     detect: True
     detect_level: INFO
     detect_counts:
-      - "Launch Sensitive Mount Container": 1
+      - "Launch Sensitive Mount Container": 3
 
   create-files-below-dev:
     trace_file: traces-positive/create-files-below-dev.scap

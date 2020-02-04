@@ -1,19 +1,17 @@
 /*
-Copyright (C) 2016 Draios inc.
+Copyright (C) 2019 The Falco Authors.
 
-This file is part of falco.
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-falco is free software; you can redistribute it and/or modify
-it under the terms of the GNU General Public License version 2 as
-published by the Free Software Foundation.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-falco is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with falco.  If not, see <http://www.gnu.org/licenses/>.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
 
 #include <ctime>
@@ -21,6 +19,7 @@ along with falco.  If not, see <http://www.gnu.org/licenses/>.
 #include "chisel_api.h"
 
 #include "falco_common.h"
+#include "banned.h"
 
 const static struct luaL_reg ll_falco [] =
 {
@@ -29,10 +28,16 @@ const static struct luaL_reg ll_falco [] =
 };
 
 int falco_logger::level = LOG_INFO;
+bool falco_logger::time_format_iso_8601 = false;
 
 void falco_logger::init(lua_State *ls)
 {
 	luaL_openlib(ls, "falco", ll_falco, 0);
+}
+
+void falco_logger::set_time_format_iso_8601(bool val)
+{
+	falco_logger::time_format_iso_8601 = val;
 }
 
 void falco_logger::set_level(string &level)
@@ -92,23 +97,65 @@ int falco_logger::syslog(lua_State *ls) {
 bool falco_logger::log_stderr = true;
 bool falco_logger::log_syslog = true;
 
-void falco_logger::log(int priority, const string msg) {
+void falco_logger::log(int priority, const string msg)
+{
 
 	if(priority > falco_logger::level)
 	{
 		return;
 	}
 
-	if (falco_logger::log_syslog) {
-		::syslog(priority, "%s", msg.c_str());
+	string copy = msg;
+
+	if (falco_logger::log_syslog)
+	{
+		// Syslog output should not have any trailing newline
+		if(copy.back() == '\n')
+		{
+			copy.pop_back();
+		}
+
+		::syslog(priority, "%s", copy.c_str());
 	}
 
-	if (falco_logger::log_stderr) {
+	if (falco_logger::log_stderr)
+	{
+		// log output should always have a trailing newline
+		if(copy.back() != '\n')
+		{
+			copy.push_back('\n');
+		}
+
 		std::time_t result = std::time(nullptr);
-		string tstr = std::asctime(std::localtime(&result));
-		tstr = tstr.substr(0, 24);// remove trailling newline
-		fprintf(stderr, "%s: %s", tstr.c_str(), msg.c_str());
+		if(falco_logger::time_format_iso_8601)
+		{
+			char buf[sizeof "YYYY-MM-DDTHH:MM:SS-0000"];
+			struct tm *gtm = std::gmtime(&result);
+			if(gtm == NULL ||
+			   (strftime(buf, sizeof(buf), "%FT%T%z", gtm) == 0))
+			{
+				sprintf(buf, "N/A");
+			}
+			else
+			{
+				fprintf(stderr, "%s: %s", buf, msg.c_str());
+			}
+		}
+		else
+		{
+			struct tm *ltm = std::localtime(&result);
+			char *atime = (ltm ? std::asctime(ltm) : NULL);
+			string tstr;
+			if(atime)
+			{
+				tstr = atime;
+				tstr = tstr.substr(0, 24);// remove trailling newline
+			}
+			else
+			{
+				tstr = "N/A";
+			}
+			fprintf(stderr, "%s: %s", tstr.c_str(), msg.c_str());
+		}
 	}
 }
-
-

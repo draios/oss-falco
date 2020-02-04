@@ -1,14 +1,31 @@
-#!/bin/bash
-#set -e
+#!/usr/bin/env bash
+#
+# Copyright (C) 2019 The Falco Authors.
+#
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
 
-# Set the SYSDIG_SKIP_LOAD variable to skip loading the sysdig kernel module
+# set -e
 
-if [[ -z "${SYSDIG_SKIP_LOAD}" ]]; then
+# Set the SKIP_MODULE_LOAD variable to skip loading the kernel module
+
+if [[ -z "${SKIP_MODULE_LOAD}" ]]; then
     echo "* Setting up /usr/src links from host"
 
-    for i in $(ls $SYSDIG_HOST_ROOT/usr/src)
+    for i in "$HOST_ROOT/usr/src"/*
     do
-        ln -s $SYSDIG_HOST_ROOT/usr/src/$i /usr/src/$i
+        ln -s "$i" "/usr/src/$i"
     done
 
     /usr/bin/falco-probe-loader

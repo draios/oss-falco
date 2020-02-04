@@ -1,30 +1,31 @@
+-- Copyright (C) 2019 The Falco Authors.
 --
--- Copyright (C) 2016 Draios inc.
+-- Licensed under the Apache License, Version 2.0 (the "License");
+-- you may not use this file except in compliance with the License.
+-- You may obtain a copy of the License at
 --
--- This file is part of falco.
+--     http://www.apache.org/licenses/LICENSE-2.0
 --
--- falco is free software; you can redistribute it and/or modify
--- it under the terms of the GNU General Public License version 2 as
--- published by the Free Software Foundation.
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS,
+-- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-- See the License for the specific language governing permissions and
+-- limitations under the License.
 --
--- falco is distributed in the hope that it will be useful,
--- but WITHOUT ANY WARRANTY; without even the implied warranty of
--- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
--- GNU General Public License for more details.
---
--- You should have received a copy of the GNU General Public License
--- along with falco.  If not, see <http://www.gnu.org/licenses/>.
-
 
 local mod = {}
 
 local outputs = {}
 
-function mod.stdout(priority, priority_num, msg, options)
+function mod.stdout(event, rule, source, priority, priority_num, msg, format, hostname, options)
+   mod.stdout_message(priority, priority_num, msg, outputs)
+end
+
+function mod.stdout_message(priority, priority_num, msg, options)
    if options.buffered == 0 then
-      io.stdout:setvbuf 'no'
+      io.stdout:setvbuf "no"
    end
-   print (msg)
+   print(msg)
 end
 
 function mod.stdout_cleanup()
@@ -36,28 +37,31 @@ function mod.stdout_reopen(options)
 end
 
 function mod.file_validate(options)
-   if (not type(options.filename) == 'string') then
+   if (not type(options.filename) == "string") then
       error("File output needs to be configured with a valid filename")
    end
 
    local file, err = io.open(options.filename, "a+")
    if file == nil then
-      error("Error with file output: "..err)
+      error("Error with file output: " .. err)
    end
    file:close()
-
 end
 
 function mod.file_open(options)
    if ffile == nil then
       ffile = io.open(options.filename, "a+")
       if options.buffered == 0 then
-	 ffile:setvbuf 'no'
+         ffile:setvbuf "no"
       end
    end
 end
 
-function mod.file(priority, priority_num, msg, options)
+function mod.file(event, rule, source, priority, priority_num, msg, format, hostname, options)
+   mod.file_message(priority, priority_num, msg, options)
+end
+
+function mod.file_message(priority, priority_num, msg, options)
    if options.keep_alive == "true" then
       mod.file_open(options)
    else
@@ -66,8 +70,7 @@ function mod.file(priority, priority_num, msg, options)
 
    ffile:write(msg, "\n")
 
-   if options.keep_alive == nil or
-          options.keep_alive ~= "true" then
+   if options.keep_alive == nil or options.keep_alive ~= "true" then
       ffile:close()
       ffile = nil
    end
@@ -88,7 +91,11 @@ function mod.file_reopen(options)
    end
 end
 
-function mod.syslog(priority, priority_num, msg, options)
+function mod.syslog(event, rule, source, priority, priority_num, msg, format, hostname, options)
+   mod.syslog_message(priority, priority_num, msg, options)
+end
+
+function mod.syslog_message(priority, priority_num, msg, options)
    falco.syslog(priority_num, msg)
 end
 
@@ -102,12 +109,16 @@ function mod.program_open(options)
    if pfile == nil then
       pfile = io.popen(options.program, "w")
       if options.buffered == 0 then
-	 pfile:setvbuf 'no'
+         pfile:setvbuf "no"
       end
    end
 end
 
-function mod.program(priority, priority_num, msg, options)
+function mod.program(event, rule, source, priority, priority_num, msg, format, hostname, options)
+   mod.program_message(priority, priority_num, msg, options)
+end
+
+function mod.program_message(priority, priority_num, msg, options)
    -- XXX Ideally we'd check that the program ran
    -- successfully. However, the luajit we're using returns true even
    -- when the shell can't run the program.
@@ -121,8 +132,7 @@ function mod.program(priority, priority_num, msg, options)
 
    pfile:write(msg, "\n")
 
-   if options.keep_alive == nil or
-          options.keep_alive ~= "true" then
+   if options.keep_alive == nil or options.keep_alive ~= "true" then
       pfile:close()
       pfile = nil
    end
@@ -143,44 +153,100 @@ function mod.program_reopen(options)
    end
 end
 
-function output_event(event, rule, priority, priority_num, format)
+function mod.http(event, rule, source, priority, priority_num, msg, format, hostname, options)
+   mod.http_message(priority, priority_num, msg, options)
+end
+
+function mod.http_message(priority, priority_num, msg, options)
+   c_outputs.handle_http(options.url, msg)
+end
+
+function mod.http_cleanup()
+end
+
+function mod.http_reopen()
+end
+
+function mod.grpc(event, rule, source, priority, priority_num, msg, format, hostname, options)
+   fields = formats.resolve_tokens(event, source, format)
+   c_outputs.handle_grpc(event, rule, source, priority, msg, fields, hostname, options)
+end
+
+function mod.grpc_message(priority, priority_num, msg, options)
+   -- todo(fntlnz, leodido) > gRPC does not support subscribing to dropped events yet
+end
+
+
+function mod.grpc_cleanup()
+end
+
+function mod.grpc_reopen()
+end
+
+function output_event(event, rule, source, priority, priority_num, format, hostname)
    -- If format starts with a *, remove it, as we're adding our own
    -- prefix here.
-   if format:sub(1,1) == "*" then
+   if format:sub(1, 1) == "*" then
       format = format:sub(2)
    end
 
-   format = "*%evt.time: "..priority.." "..format
+   -- time_format_iso_8601 will be the same for all output channels
+   time_format_iso_8601 = 0
 
-   msg = formats.format_event(event, rule, priority, format)
+   for index, o in ipairs(outputs) do
+      time_format_iso_8601 = o.options.time_format_iso_8601
+      break
+   end
 
-   for index,o in ipairs(outputs) do
-      o.output(priority, priority_num, msg, o.options)
+   if source == "syscall" then
+      if time_format_iso_8601 == 1 then
+         format = "*%evt.time.iso8601: " .. priority .. " " .. format
+      else
+         format = "*%evt.time: " .. priority .. " " .. format
+      end
+   else
+      if time_format_iso_8601 == 1 then
+         format = "*%jevt.time.iso8601: " .. priority .. " " .. format
+      else
+         format = "*%jevt.time: " .. priority .. " " .. format
+      end
+   end
+
+   msg = formats.format_event(event, rule, source, priority, format)
+
+   for index, o in ipairs(outputs) do
+      o.output(event, rule, source, priority, priority_num, msg, format, hostname, o.options)
+   end
+end
+
+function output_msg(msg, priority, priority_num)
+   for index, o in ipairs(outputs) do
+      o.message(priority, priority_num, msg, o.options)
    end
 end
 
 function output_cleanup()
    formats.free_formatters()
-   for index,o in ipairs(outputs) do
+   for index, o in ipairs(outputs) do
       o.cleanup()
    end
 end
 
 function output_reopen()
-   for index,o in ipairs(outputs) do
+   for index, o in ipairs(outputs) do
       o.reopen(o.options)
    end
 end
 
-function add_output(output_name, buffered, options)
-   if not (type(mod[output_name]) == 'function') then
-      error("rule_loader.add_output(): invalid output_name: "..output_name)
+function add_output(output_name, buffered, time_format_iso_8601, options)
+   if not (type(mod[output_name]) == "function") then
+      error("rule_loader.add_output(): invalid output_name: " .. output_name)
    end
 
    -- outputs can optionally define a validation function so that we don't
    -- find out at runtime (when an event finally matches a rule!) that the options are invalid
-   if (type(mod[output_name.."_validate"]) == 'function') then
-     mod[output_name.."_validate"](options)
+   if (type(mod[output_name .. "_validate"]) == "function") then
+      mod[output_name .. "_validate"](options)
    end
 
    if options == nil then
@@ -188,11 +254,18 @@ function add_output(output_name, buffered, options)
    end
 
    options.buffered = buffered
+   options.time_format_iso_8601 = time_format_iso_8601
 
-   table.insert(outputs, {output = mod[output_name],
-			  cleanup = mod[output_name.."_cleanup"],
-			  reopen = mod[output_name.."_reopen"],
-			  options=options})
+   table.insert(
+      outputs,
+      {
+         output = mod[output_name],
+         cleanup = mod[output_name .. "_cleanup"],
+         reopen = mod[output_name .. "_reopen"],
+         message = mod[output_name .. "_message"],
+         options = options
+      }
+   )
 end
 
 return mod

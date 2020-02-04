@@ -1,4 +1,20 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
+# Copyright (C) 2019 The Falco Authors.
+#
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
 
 #set -x
 
@@ -114,7 +130,7 @@ function run_trace() {
 	files=($TRACEDIR/traces-perf/$trace_file.scap)
     fi
 
-    for file in ${files[@]}; do
+    for file in "${files[@]}"; do
 	if [[ $ROOT == *"falco"* ]]; then
 	    run_falco_on "$file"
 	elif [[ $ROOT == *"sysdig"* ]]; then
@@ -126,7 +142,7 @@ function run_trace() {
 }
 
 function start_monitor_cpu_usage() {
-    echo "   monitoring cpu usage for sysdig/falco program"
+    echo "   monitoring cpu usage for falcosecurity/falco program"
 
     setsid bash `dirname $0`/cpu_monitor.sh $SUBJ_PID $live_test $VARIANT $RESULTS_FILE $CPU_INTERVAL &
     CPU_PID=$!
@@ -189,7 +205,7 @@ function run_juttle_examples() {
     docker-compose -f dc-juttle-engine.yml -f aws-cloudwatch/dc-aws-cloudwatch.yml -f elastic-newstracker/dc-elastic.yml -f github-tutorial/dc-elastic.yml -f nginx_logs/dc-nginx-logs.yml -f postgres-diskstats/dc-postgres.yml -f cadvisor-influx/dc-cadvisor-influx.yml up -d
     sleep 120
     docker-compose -f dc-juttle-engine.yml -f aws-cloudwatch/dc-aws-cloudwatch.yml -f elastic-newstracker/dc-elastic.yml -f github-tutorial/dc-elastic.yml -f nginx_logs/dc-nginx-logs.yml -f postgres-diskstats/dc-postgres.yml -f cadvisor-influx/dc-cadvisor-influx.yml stop
-    docker-compose -f dc-juttle-engine.yml -f aws-cloudwatch/dc-aws-cloudwatch.yml -f elastic-newstracker/dc-elastic.yml -f github-tutorial/dc-elastic.yml -f nginx_logs/dc-nginx-logs.yml -f postgres-diskstats/dc-postgres.yml -f cadvisor-influx/dc-cadvisor-influx.yml rm -fv    
+    docker-compose -f dc-juttle-engine.yml -f aws-cloudwatch/dc-aws-cloudwatch.yml -f elastic-newstracker/dc-elastic.yml -f github-tutorial/dc-elastic.yml -f nginx_logs/dc-nginx-logs.yml -f postgres-diskstats/dc-postgres.yml -f cadvisor-influx/dc-cadvisor-influx.yml rm -fv
     popd
 }
 
