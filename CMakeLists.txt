@@ -67,24 +67,7 @@ set(CMAKE_CXX_FLAGS_DEBUG "${DRAIOS_DEBUG_FLAGS}")
 set(CMAKE_C_FLAGS_RELEASE "-O3 -fno-strict-aliasing -DNDEBUG")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -fno-strict-aliasing -DNDEBUG")
 
-# Create the falco version variable according to git index
-if(NOT FALCO_VERSION)
-  include(GetGitRevisionDescription)
-  git_get_exact_tag(FALCO_TAG)
-  if(NOT FALCO_TAG)
-    git_describe(FALCO_VERSION "--always")
-    git_local_changes(FALCO_CHANGES)
-    if(FALCO_CHANGES STREQUAL "DIRTY")
-      string(TOLOWER "${FALCO_CHANGES}" FALCO_CHANGES)
-      set(FALCO_VERSION "${FALCO_VERSION}.${FALCO_CHANGES}")
-    endif()
-    set(FALCO_VERSION "0.${FALCO_VERSION}")
-  else()
-    set(FALCO_VERSION "${FALCO_TAG}")
-    string(REGEX REPLACE "^v([0-9]+)(\\.[0-9]+)(\\.[0-9]+)?" "\\1\\2\\3" FALCO_VERSION ${FALCO_VERSION})
-  endif()
-endif()
-message(STATUS "Falco version: ${FALCO_VERSION}")
+include(GetFalcoVersion)
 
 set(PACKAGE_NAME "falco")
 set(PROBE_VERSION "${FALCO_VERSION}")
@@ -240,6 +223,7 @@ include(sysdig)
 # Installation
 install(FILES falco.yaml DESTINATION "${FALCO_ETC_DIR}")
 
+# Coverage
 include(Coverage)
 
 # Tests
