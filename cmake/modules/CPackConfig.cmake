@@ -1,9 +1,12 @@
 set(CPACK_PACKAGE_NAME "${PACKAGE_NAME}")
 set(CPACK_PACKAGE_VENDOR "Cloud Native Computing Foundation (CNCF) cncf.io.")
-set(CPACK_PACKAGE_CONTACT "opensource@sysdig.com") # todo: change this once we've got @falco.org addresses
+set(CPACK_PACKAGE_CONTACT "cncf-falco-dev@lists.cncf.io") # todo: change this once we've got @falco.org addresses
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Falco - Container Native Runtime Security")
 set(CPACK_PACKAGE_DESCRIPTION_FILE "${PROJECT_SOURCE_DIR}/scripts/description.txt")
 set(CPACK_PACKAGE_VERSION "${FALCO_VERSION}")
+set(CPACK_PACKAGE_VERSION_MAJOR "${FALCO_VERSION_MAJOR}")
+set(CPACK_PACKAGE_VERSION_MINOR "${FALCO_VERSION_MINOR}")
+set(CPACK_PACKAGE_VERSION_PATCH "${FALCO_VERSION_PATCH}")
 set(CPACK_PACKAGE_FILE_NAME "${CPACK_PACKAGE_NAME}-${CPACK_PACKAGE_VERSION}-${CMAKE_SYSTEM_PROCESSOR}")
 set(CPACK_PROJECT_CONFIG_FILE "${PROJECT_SOURCE_DIR}/cmake/cpack/CMakeCPackOptions.cmake")
 set(CPACK_STRIP_FILES "ON")
