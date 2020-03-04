@@ -1,34 +1,33 @@
 FROM ubuntu:18.04
 
-LABEL maintainer="opensource@sysdig.com"
+LABEL maintainer="cncf-falco-dev@lists.cncf.io"
 
-ENV FALCO_REPOSITORY dev
+LABEL RUN="docker run -i -t -v /var/run/docker.sock:/host/var/run/docker.sock -v /dev:/host/dev -v /proc:/host/proc:ro -v /boot:/host/boot:ro -v /lib/modules:/host/lib/modules:ro -v /usr:/host/usr:ro --name <name> <image>"
 
-LABEL RUN="docker run -i -t -v /var/run/docker.sock:/host/var/run/docker.sock -v /dev:/host/dev -v /proc:/host/proc:ro -v /boot:/host/boot:ro -v /lib/modules:/host/lib/modules:ro -v /usr:/host/usr:ro --name NAME IMAGE"
+ARG VERSION_BUCKET=deb
+
+ENV VERSION_BUCKET=${VERSION_BUCKET}
 
 ENV HOST_ROOT /host
-
 ENV HOME /root
 
 RUN cp /etc/skel/.bashrc /root && cp /etc/skel/.profile /root
 
-ADD http://download.draios.com/apt-draios-priority /etc/apt/preferences.d/
-
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-  # 	bash-completion \
-  # 	bc \
+  # bash-completion \
+  # bc \
   ca-certificates \
   curl \
   gnupg2 \
   jq \
-  # 	netcat \
-  # 	xz-utils \
+  # netcat \
+  # xz-utils \
   && rm -rf /var/lib/apt/lists/*
 
-RUN curl -s https://s3.amazonaws.com/download.draios.com/DRAIOS-GPG-KEY.public | apt-key add - \
-  && curl -s -o /etc/apt/sources.list.d/draios.list http://download.draios.com/$FALCO_REPOSITORY/deb/draios.list \
-  && apt-get update \
+RUN curl -s https://falco.org/repo/falcosecurity-3672BA8F.asc | apt-key add - \
+  && echo "deb https://dl.bintray.com/falcosecurity/${VERSION_BUCKET} stable main" | tee -a /etc/apt/sources.list.d/falcosecurity.list \
+  && apt-get update -y \
   && apt-get install -y --no-install-recommends falco \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
@@ -43,8 +42,5 @@ RUN sed -e 's/time_format_iso_8601: false/time_format_iso_8601: true/' < /etc/fa
 # silently overwriting the existing directory
 RUN rm -df /lib/modules \
   && ln -s $HOST_ROOT/lib/modules /lib/modules
-
-#COPY ./entrypoint.sh /
-# ENTRYPOINT ["/entrypoint.sh"]
 
 CMD ["/usr/bin/falco", "-o", "time_format_iso_8601=true"]
