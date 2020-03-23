@@ -23,7 +23,7 @@ import shutil
 import stat
 import subprocess
 import sys
-import urllib
+import urllib.request
 
 from avocado import Test
 from avocado import main
@@ -141,7 +141,7 @@ class FalcoTest(Test):
         else:
             detect_counts = {}
             for item in self.detect_counts:
-                for key, value in item.items():
+                for key, value in list(item.items()):
                     detect_counts[key] = value
             self.detect_counts = detect_counts
 
@@ -175,7 +175,7 @@ class FalcoTest(Test):
         self.copy_local_driver = self.params.get('copy_local_driver', '*', default=False)
 
         # Used by possibly_copy_local_driver as well as docker run
-        self.module_dir = os.path.expanduser("~/.sysdig")
+        self.module_dir = os.path.expanduser("~/.falco")
 
         self.outputs = self.params.get('outputs', '*', default='')
 
@@ -184,7 +184,7 @@ class FalcoTest(Test):
         else:
             outputs = []
             for item in self.outputs:
-                for key, value in item.items():
+                for key, value in list(item.items()):
                     output = {}
                     output['file'] = key
                     output['line'] = value
@@ -238,7 +238,7 @@ class FalcoTest(Test):
         self.log.debug("Expected events for rules: {}".format(self.rules_events))
         self.log.debug("Actual events for rules: {}".format(found_events))
 
-        for rule in found_events.keys():
+        for rule in list(found_events.keys()):
             if found_events.get(rule) != self.rules_events.get(rule):
                 self.fail("rule {}: expected events {} differs from actual events {}".format(rule, self.rules_events.get(rule), found_events.get(rule)))
 
@@ -277,7 +277,7 @@ class FalcoTest(Test):
 
         triggered_rules = match.group(1)
 
-        for rule, count in self.detect_counts.items():
+        for rule, count in list(self.detect_counts.items()):
             expected = '\s{}: (\d+)'.format(re.sub(r'([$\.*+?()[\]{}|^])', r'\\\1', rule))
             match = re.search(expected, triggered_rules)
 
@@ -335,7 +335,7 @@ class FalcoTest(Test):
             self.falco_binary_path = "docker run --rm --name falco-test --privileged " \
                                      "-v /var/run/docker.sock:/host/var/run/docker.sock " \
                                      "-v /dev:/host/dev -v /proc:/host/proc:ro -v /boot:/host/boot:ro " \
-                                     "-v /lib/modules:/host/lib/modules:ro -v {}:/root/.sysdig:ro " \
+                                     "-v /lib/modules:/host/lib/modules:ro -v {}:/root/.falco:ro " \
                                      "-v /usr:/host/usr:ro {} {} falco".format(
                                          self.module_dir, self.addl_docker_run_args, image)
 
@@ -387,8 +387,7 @@ class FalcoTest(Test):
             res = process.run(cmdline, timeout=120, sudo=True)
 
     def possibly_copy_driver(self):
-        # Remove the contents of ~/.sysdig regardless of
-        # copy_local_driver.
+        # Remove the contents of ~/.falco regardless of copy_local_driver.
         self.log.debug("Checking for module dir {}".format(self.module_dir))
         if os.path.isdir(self.module_dir):
             self.log.info("Removing files below directory {}".format(self.module_dir))
@@ -397,7 +396,8 @@ class FalcoTest(Test):
                 os.remove(rmfile)
 
         if self.copy_local_driver:
-            verstr = subprocess.check_output([self.falco_binary_path, "--version"]).rstrip()
+            verlines = [str.strip() for str in subprocess.check_output([self.falco_binary_path, "--version"]).splitlines()]
+            verstr = verlines[0].decode("utf-8")
             self.log.info("verstr {}".format(verstr))
             falco_version = verstr.split(" ")[2]
             self.log.info("falco_version {}".format(falco_version))
@@ -406,7 +406,7 @@ class FalcoTest(Test):
             kernel_release = subprocess.check_output(["uname", "-r"]).rstrip()
             self.log.info("kernel release {}".format(kernel_release))
 
-            # falco-probe-loader has a more comprehensive set of ways to
+            # falco-driver-loader has a more comprehensive set of ways to
             # find the config hash. We only look at /boot/config-<kernel release>
             md5_output = subprocess.check_output(["md5sum", "/boot/config-{}".format(kernel_release)]).rstrip()
             config_hash = md5_output.split(" ")[0]
@@ -439,7 +439,7 @@ class FalcoTest(Test):
             if not os.path.isfile(self.psp_conv_path):
                 self.log.info("Downloading {} to {}".format(self.psp_conv_url, self.psp_conv_path))
 
-                urllib.urlretrieve(self.psp_conv_url, self.psp_conv_path)
+                urllib.request.urlretrieve(self.psp_conv_url, self.psp_conv_path)
                 os.chmod(self.psp_conv_path, stat.S_IEXEC)
 
             conv_cmd = '{} convert psp --psp-path {} --rules-path {}'.format(
