@@ -179,25 +179,25 @@ jobs:
       - run:
           name: Create versions
           command: |
-            FALCO_VERSION=$(sed -e 's/^"//' -e 's/"$//' <<< $(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3))
-            jfrog bt vc falcosecurity/deb-dev/falco/${FALCO_VERSION} --desc="Falco (master)" --github-rel-notes=CHANGELOG.md --released=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z") --vcs-tag=${CIRCLE_SHA1} --user poiana --key ${BINTRAY_SECRET}
-            jfrog bt vc falcosecurity/rpm-dev/falco/${FALCO_VERSION} --desc="Falco (master)" --github-rel-notes=CHANGELOG.md --released=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z") --vcs-tag=${CIRCLE_SHA1} --user poiana --key ${BINTRAY_SECRET}
-            jfrog bt vc falcosecurity/bin-dev/falco/${FALCO_VERSION} --desc="Falco (master)" --github-rel-notes=CHANGELOG.md --released=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z") --vcs-tag=${CIRCLE_SHA1} --user poiana --key ${BINTRAY_SECRET}
+            FALCO_VERSION=$(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3 | sed -e 's/^"//' -e 's/"$//')
+            jfrog bt vs falcosecurity/deb-dev/falco/${FALCO_VERSION} --user poiana --key ${BINTRAY_SECRET} || jfrog bt vc falcosecurity/deb-dev/falco/${FALCO_VERSION} --desc="Falco (master)" --github-rel-notes=CHANGELOG.md --released=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z") --vcs-tag=${CIRCLE_SHA1} --user poiana --key ${BINTRAY_SECRET}
+            jfrog bt vs falcosecurity/rpm-dev/falco/${FALCO_VERSION} --user poiana --key ${BINTRAY_SECRET} || jfrog bt vc falcosecurity/rpm-dev/falco/${FALCO_VERSION} --desc="Falco (master)" --github-rel-notes=CHANGELOG.md --released=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z") --vcs-tag=${CIRCLE_SHA1} --user poiana --key ${BINTRAY_SECRET}
+            jfrog bt vs falcosecurity/bin-dev/falco/${FALCO_VERSION} --user poiana --key ${BINTRAY_SECRET} || jfrog bt vc falcosecurity/bin-dev/falco/${FALCO_VERSION} --desc="Falco (master)" --github-rel-notes=CHANGELOG.md --released=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z") --vcs-tag=${CIRCLE_SHA1} --user poiana --key ${BINTRAY_SECRET}
       - run:
           name: Publish deb-dev
           command: |
-            FALCO_VERSION=$(sed -e 's/^"//' -e 's/"$//' <<< $(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3))
-            jfrog bt u /build/release/falco-${FALCO_VERSION}-x86_64.deb falcosecurity/deb-dev/falco/${FALCO_VERSION} stable/ --deb stable/main/amd64 --user poiana --key ${BINTRAY_SECRET} --publish
+            FALCO_VERSION=$(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3 | sed -e 's/^"//' -e 's/"$//')
+            jfrog bt u /build/release/falco-${FALCO_VERSION}-x86_64.deb falcosecurity/deb-dev/falco/${FALCO_VERSION} stable/ --deb stable/main/amd64 --user poiana --key ${BINTRAY_SECRET} --publish --override
       - run:
           name: Publish rpm-dev
           command: |
-            FALCO_VERSION=$(sed -e 's/^"//' -e 's/"$//' <<< $(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3))
-            jfrog bt u /build/release/falco-${FALCO_VERSION}-x86_64.rpm falcosecurity/rpm-dev/falco/${FALCO_VERSION} --user poiana --key ${BINTRAY_SECRET} --publish
+            FALCO_VERSION=$(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3 | sed -e 's/^"//' -e 's/"$//')
+            jfrog bt u /build/release/falco-${FALCO_VERSION}-x86_64.rpm falcosecurity/rpm-dev/falco/${FALCO_VERSION} --user poiana --key ${BINTRAY_SECRET} --publish --override
       - run:
           name: Publish tgz-dev
           command: |
-            FALCO_VERSION=$(sed -e 's/^"//' -e 's/"$//' <<< $(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3))
-            jfrog bt u /build/release/falco-${FALCO_VERSION}-x86_64.tar.gz falcosecurity/bin-dev/falco/${FALCO_VERSION} x86_64/ --user poiana --key ${BINTRAY_SECRET} --publish
+            FALCO_VERSION=$(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3 | sed -e 's/^"//' -e 's/"$//')
+            jfrog bt u /build/release/falco-${FALCO_VERSION}-x86_64.tar.gz falcosecurity/bin-dev/falco/${FALCO_VERSION} x86_64/ --user poiana --key ${BINTRAY_SECRET} --publish --override
   # Publish docker packages
   "publish/docker-dev":
     docker:
@@ -210,20 +210,22 @@ jobs:
       - run:
           name: Build and publish slim-dev
           command: |
-            docker build --build-arg VERSION_BUCKET=deb-dev -t falcosecurity/falco:master-slim docker/slim
+            FALCO_VERSION=$(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3 | sed -e 's/^"//' -e 's/"$//')
+            docker build --build-arg VERSION_BUCKET=deb-dev --build-arg FALCO_VERSION=${FALCO_VERSION} -t falcosecurity/falco:master-slim docker/slim
             echo ${DOCKERHUB_SECRET} | docker login -u ${DOCKERHUB_USER} --password-stdin
             docker push falcosecurity/falco:master-slim
       - run:
           name: Build and publish minimal-dev
           command: |
-            FALCO_VERSION=$(sed -e 's/^"//' -e 's/"$//' <<< $(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3))
-            docker build --build-arg VERSION_BUCKET=bin-dev FALCO_VERSION=${FALCO_VERSION} -t falcosecurity/falco:master-minimal docker/minimal
+            FALCO_VERSION=$(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3 | sed -e 's/^"//' -e 's/"$//')
+            docker build --build-arg VERSION_BUCKET=bin-dev --build-arg FALCO_VERSION=${FALCO_VERSION} -t falcosecurity/falco:master-minimal docker/minimal
             echo ${DOCKERHUB_SECRET} | docker login -u ${DOCKERHUB_USER} --password-stdin
             docker push falcosecurity/falco:master-minimal
       - run:
           name: Build and publish dev
           command: |
-            docker build --build-arg VERSION_BUCKET=deb-dev -t falcosecurity/falco:master docker/stable
+            FALCO_VERSION=$(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3 | sed -e 's/^"//' -e 's/"$//')
+            docker build --build-arg VERSION_BUCKET=deb-dev --build-arg FALCO_VERSION=${FALCO_VERSION} -t falcosecurity/falco:master docker/stable
             echo ${DOCKERHUB_SECRET} | docker login -u ${DOCKERHUB_USER} --password-stdin
             docker push falcosecurity/falco:master
   # Publish the packages
@@ -236,25 +238,25 @@ jobs:
       - run:
           name: Create versions
           command: |
-            FALCO_VERSION=$(sed -e 's/^"//' -e 's/"$//' <<< $(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3))
-            jfrog bt vc falcosecurity/deb/falco/${FALCO_VERSION} --desc="Falco (${CIRCLE_TAG})" --github-tag-rel-notes --released=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z") --vcs-tag=${CIRCLE_TAG}
-            jfrog bt vc falcosecurity/rpm/falco/${FALCO_VERSION} --desc="Falco (${CIRCLE_TAG})" --github-tag-rel-notes --released=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z") --vcs-tag=${CIRCLE_TAG}
-            jfrog bt vc falcosecurity/bin/falco/${FALCO_VERSION} --desc="Falco (${CIRCLE_TAG})" --github-tag-rel-notes --released=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z") --vcs-tag=${CIRCLE_TAG}
+            FALCO_VERSION=$(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3 | sed -e 's/^"//' -e 's/"$//')
+            jfrog bt vs falcosecurity/deb/falco/${FALCO_VERSION} --user poiana --key ${BINTRAY_SECRET} || jfrog bt vc falcosecurity/deb/falco/${FALCO_VERSION} --desc="Falco (${CIRCLE_TAG})" --released=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z") --vcs-tag=${CIRCLE_TAG} --user poiana --key ${BINTRAY_SECRET}
+            jfrog bt vs falcosecurity/rpm/falco/${FALCO_VERSION} --user poiana --key ${BINTRAY_SECRET} || jfrog bt vc falcosecurity/rpm/falco/${FALCO_VERSION} --desc="Falco (${CIRCLE_TAG})" --released=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z") --vcs-tag=${CIRCLE_TAG} --user poiana --key ${BINTRAY_SECRET}
+            jfrog bt vs falcosecurity/bin/falco/${FALCO_VERSION} --user poiana --key ${BINTRAY_SECRET} || jfrog bt vc falcosecurity/bin/falco/${FALCO_VERSION} --desc="Falco (${CIRCLE_TAG})" --released=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z") --vcs-tag=${CIRCLE_TAG} --user poiana --key ${BINTRAY_SECRET}
       - run:
           name: Publish deb
           command: |
-            FALCO_VERSION=$(sed -e 's/^"//' -e 's/"$//' <<< $(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3))
-            jfrog bt u /build/release/falco-${FALCO_VERSION}-x86_64.deb falcosecurity/deb/falco/${FALCO_VERSION} stable/ --deb stable/main/amd64 --user poiana --key ${BINTRAY_SECRET} --publish --labels="falco","security","cncf","kubernetes"
+            FALCO_VERSION=$(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3 | sed -e 's/^"//' -e 's/"$//')
+            jfrog bt u /build/release/falco-${FALCO_VERSION}-x86_64.deb falcosecurity/deb/falco/${FALCO_VERSION} stable/ --deb stable/main/amd64 --user poiana --key ${BINTRAY_SECRET} --publish --override
       - run:
           name: Publish rpm
           command: |
-            FALCO_VERSION=$(sed -e 's/^"//' -e 's/"$//' <<< $(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3))
-            jfrog bt u /build/release/falco-${FALCO_VERSION}-x86_64.rpm falcosecurity/rpm/falco/${FALCO_VERSION} --user poiana --key ${BINTRAY_SECRET} --publish
+            FALCO_VERSION=$(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3 | sed -e 's/^"//' -e 's/"$//')
+            jfrog bt u /build/release/falco-${FALCO_VERSION}-x86_64.rpm falcosecurity/rpm/falco/${FALCO_VERSION} --user poiana --key ${BINTRAY_SECRET} --publish --override
       - run:
           name: Publish tgz
           command: |
-            FALCO_VERSION=$(sed -e 's/^"//' -e 's/"$//' <<< $(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3))
-            jfrog bt u /build/release/falco-${FALCO_VERSION}-x86_64.tar.gz falcosecurity/bin/falco/${FALCO_VERSION} x86_64/ --user poiana --key ${BINTRAY_SECRET} --publish
+            FALCO_VERSION=$(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3 | sed -e 's/^"//' -e 's/"$//')
+            jfrog bt u /build/release/falco-${FALCO_VERSION}-x86_64.tar.gz falcosecurity/bin/falco/${FALCO_VERSION} x86_64/ --user poiana --key ${BINTRAY_SECRET} --publish --override
   # Publish docker packages
   "publish/docker":
     docker:
@@ -267,7 +269,7 @@ jobs:
       - run:
           name: Build and publish slim
           command: |
-            docker build --build-arg VERSION_BUCKET=deb -t "falcosecurity/falco:${CIRCLE_TAG}-slim" docker/slim
+            docker build --build-arg VERSION_BUCKET=deb --build-arg FALCO_VERSION=${CIRCLE_TAG} -t "falcosecurity/falco:${CIRCLE_TAG}-slim" docker/slim
             docker tag "falcosecurity/falco:${CIRCLE_TAG}-slim" falcosecurity/falco:latest-slim
             echo ${DOCKERHUB_SECRET} | docker login -u ${DOCKERHUB_USER} --password-stdin
             docker push "falcosecurity/falco:${CIRCLE_TAG}-slim"
@@ -275,8 +277,8 @@ jobs:
       - run:
           name: Build and publish minimal
           command: |
-            FALCO_VERSION=$(sed -e 's/^"//' -e 's/"$//' <<< $(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3))
-            docker build --build-arg VERSION_BUCKET=bin FALCO_VERSION=${FALCO_VERSION} -t "falcosecurity/falco:${CIRCLE_TAG}-minimal" docker/minimal
+            FALCO_VERSION=$(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3 | sed -e 's/^"//' -e 's/"$//')
+            docker build --build-arg VERSION_BUCKET=bin --build-arg FALCO_VERSION=${FALCO_VERSION} -t "falcosecurity/falco:${CIRCLE_TAG}-minimal" docker/minimal
             docker tag "falcosecurity/falco:${CIRCLE_TAG}-minimal" falcosecurity/falco:latest-minimal
             echo ${DOCKERHUB_SECRET} | docker login -u ${DOCKERHUB_USER} --password-stdin
             docker push "falcosecurity/falco:${CIRCLE_TAG}-minimal"
@@ -284,7 +286,7 @@ jobs:
       - run:
           name: Build and publish stable
           command: |
-            docker build --build-arg VERSION_BUCKET=deb -t "falcosecurity/falco:${CIRCLE_TAG}" docker/stable
+            docker build --build-arg VERSION_BUCKET=deb --build-arg FALCO_VERSION=${CIRCLE_TAG} -t "falcosecurity/falco:${CIRCLE_TAG}" docker/stable
             docker tag "falcosecurity/falco:${CIRCLE_TAG}" falcosecurity/falco:latest
             echo ${DOCKERHUB_SECRET} | docker login -u ${DOCKERHUB_USER} --password-stdin
             docker push "falcosecurity/falco:${CIRCLE_TAG}"
@@ -303,25 +305,28 @@ workflows:
       - "rpm/sign":
           context: falco
           filters:
+            tags:
+              ignore: /.*/
             branches:
-              only:
-                - master
+              only: master
           requires:
             - "tests/integration"
       - "publish/packages-dev":
           context: falco
           filters:
+            tags:
+              ignore: /.*/
             branches:
-              only:
-                - master
+              only: master
           requires:
             - "rpm/sign"
       - "publish/docker-dev":
           context: falco
           filters:
+            tags:
+              ignore: /.*/
             branches:
-              only:
-                - master
+              only: master
           requires:
             - "publish/packages-dev"
   release:
@@ -335,7 +340,7 @@ workflows:
       - "rpm/sign":
           context: falco
           requires:
-              - "build/centos7"
+            - "build/centos7"
           filters:
             tags:
               only: /.*/
