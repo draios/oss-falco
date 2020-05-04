@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Copyright (C) 2019 The Falco Authors.
+# Copyright (C) 2020 The Falco Authors.
 #
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,18 +17,12 @@
 #
 
 
-# Set the SKIP_MODULE_LOAD variable to skip loading the kernel module
+echo "* Setting up /usr/src links from host"
 
-if [[ -z "${SKIP_MODULE_LOAD}" ]]; then
-    echo "* Setting up /usr/src links from host"
+for i in "$HOST_ROOT/usr/src"/*
+do
+    base=$(basename "$i")
+    ln -s "$i" "/usr/src/$base"
+done
 
-    for i in "$HOST_ROOT/usr/src"/*
-    do
-        base=$(basename "$i")
-        ln -s "$i" "/usr/src/$base"
-    done
-
-    /usr/bin/falco-driver-loader
-fi
-
-exec "$@"
+/usr/bin/falco-driver-loader $1
