@@ -1,7 +1,5 @@
 /*
-Copyright (C) 2016-2018 The Falco Authors.
-
-This file is part of falco.
+Copyright (C) 2019 The Falco Authors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -14,21 +12,19 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-
 */
-
-#include <string>
 
 #pragma once
 
+#include <sstream>
+#include <fstream>
+#include <iostream>
+#include <string>
+
 namespace falco
 {
-
 namespace utils
 {
-
-std::string wrap_text(const std::string &str, uint32_t initial_pos, uint32_t indent, uint32_t line_len);
-
+void read(const std::string& filename, std::string& data);
 } // namespace utils
-
 } // namespace falco
