@@ -707,7 +707,7 @@
 
 - macro: lvprogs_writing_conf
   condition: >
-    (proc.name in (dmeventd,lvcreate,pvscan) and
+    (proc.name in (dmeventd,lvcreate,pvscan,lvs) and
      (fd.name startswith /etc/lvm/archive or
       fd.name startswith /etc/lvm/backup or
       fd.name startswith /etc/lvm/cache))
@@ -2437,7 +2437,9 @@
 
 - macro: trusted_logging_images
   condition: (container.image.repository endswith "splunk/fluentd-hec" or
-              container.image.repository endswith "fluent/fluentd-kubernetes-daemonset")
+              container.image.repository endswith "fluent/fluentd-kubernetes-daemonset" or
+              container.image.repository endswith "openshift3/ose-logging-fluentd" or
+              container.image.repository endswith "containernetworking/azure-npm")
 
 - rule: Clear Log Activities
   desc: Detect clearing of critical log files
@@ -2556,7 +2558,7 @@
   items: [rsync, scp, sftp, dcp]
 
 - macro: remote_file_copy_procs
-  condition: (proc.name in (remote_File_copy_binaries))
+  condition: (proc.name in (remote_file_copy_binaries))
 
 - rule: Launch Remote File Copy Tools in Container
   desc: Detect remote file copy tools launched in container
@@ -2687,11 +2689,16 @@
 # Whitelist for known docker client binaries run inside container
 # - k8s.gcr.io/fluentd-gcp-scaler in GCP/GKE
 - macro: user_known_k8s_client_container
-  condition: (k8s.ns.name="kube-system" and container.image.repository=k8s.gcr.io/fluentd-gcp-scaler)
- 
+  condition: >
+    (k8s.ns.name="kube-system" and container.image.repository=k8s.gcr.io/fluentd-gcp-scaler) or
+    container.image.repository=mcr.microsoft.com/aks/hcp/hcp-tunnel-front
+
+- macro: user_known_k8s_client_container_parens
+  condition: (user_known_k8s_client_container)
+
 - rule: The docker client is executed in a container
   desc: Detect a k8s client tool executed inside a container
-  condition: spawned_process and container and not user_known_k8s_client_container and proc.name in (k8s_client_binaries)
+  condition: spawned_process and container and not user_known_k8s_client_container_parens and proc.name in (k8s_client_binaries)
   output: "Docker or kubernetes client executed in container (user=%user.name %container.info parent=%proc.pname cmdline=%proc.cmdline image=%container.image.repository:%container.image.tag)"
   priority: WARNING
   tags: [container, mitre_execution]
