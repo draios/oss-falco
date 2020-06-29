@@ -44,6 +44,15 @@ limitations under the License.
 		c.start(this);                                           \
 	}
 
+#define REGISTER_BIDI(req, res, svc, rpc, impl, num)                          \
+	std::vector<request_bidi_context<svc, req, res>> rpc##_contexts(num); \
+	for(request_bidi_context<svc, req, res> & c : rpc##_contexts)         \
+	{                                                                     \
+		c.m_process_func = &server::impl;                             \
+		c.m_request_func = &svc::AsyncService::Request##rpc;          \
+		c.start(this);                                                \
+	}
+
 static void gpr_log_dispatcher_func(gpr_log_func_args* args)
 {
 	int priority;
@@ -60,7 +69,10 @@ static void gpr_log_dispatcher_func(gpr_log_func_args* args)
 		break;
 	}
 
-	falco_logger::log(priority, args->message);
+	string copy = "grpc: ";
+	copy.append(args->message);
+	copy.push_back('\n');
+	falco_logger::log(priority, copy);
 }
 
 void falco::grpc::server::thread_process(int thread_index)
@@ -199,7 +211,8 @@ void falco::grpc::server::run()
 	// todo(leodido) > take a look at thread_stress_test.cc into grpc repository
 
 	REGISTER_UNARY(version::request, version::response, version::service, version, version, context_num)
-	REGISTER_STREAM(output::request, output::response, output::service, subscribe, subscribe, context_num)
+	REGISTER_STREAM(outputs::request, outputs::response, outputs::service, get, get, context_num)
+	REGISTER_BIDI(outputs::request, outputs::response, outputs::service, sub, sub, context_num)
 
 	m_threads.resize(m_threadiness);
 	int thread_idx = 0;
@@ -211,7 +224,7 @@ void falco::grpc::server::run()
 
 	while(server_impl::is_running())
 	{
-		sleep(1);
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
 	// todo(leodido) > log "stopping gRPC server"
 	stop();
