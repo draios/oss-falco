@@ -158,6 +158,8 @@ static void usage()
 	   "                               This causes every single line emitted by falco to be flushed,\n"
 	   "                               which generates higher CPU usage but is useful when piping those outputs\n"
 	   "                               into another process or into a script.\n"
+	   " -u, --userspace               Parse events from userspace.\n"
+	   "                               To be used in conjunction with the ptrace(2) based driver (pdig).\n"
 	   " -V, --validate <rules_file>   Read the contents of the specified rules(s) file and exit.\n"
 	   "                               Can be specified multiple times to validate multiple files.\n"
 	   " -v                            Verbose output.\n"
@@ -443,6 +445,7 @@ int falco_init(int argc, char **argv)
 	set<string> disable_sources;
 	bool disable_syscall = false;
 	bool disable_k8s_audit = false;
+	bool userspace = false;
 
 	// Used for writing trace files
 	int duration_seconds = 0;
@@ -482,6 +485,7 @@ int falco_init(int argc, char **argv)
         {"stats-interval", required_argument, 0},
         {"support", no_argument, 0},
         {"unbuffered", no_argument, 0, 'U'},
+        {"userspace", no_argument, 0, 'u'},
         {"validate", required_argument, 0, 'V'},
         {"version", no_argument, 0, 0},
         {"writefile", required_argument, 0, 'w'},
@@ -500,7 +504,7 @@ int falco_init(int argc, char **argv)
 		// Parse the args
 		//
 		while((op = getopt_long(argc, argv,
-                                        "hc:AbdD:e:F:ik:K:Ll:m:M:No:P:p:r:S:s:T:t:UvV:w:",
+                                        "hc:AbdD:e:F:ik:K:Ll:m:M:No:P:p:r:S:s:T:t:UuvV:w:",
                                         long_options, &long_index)) != -1)
 		{
 			switch(op)
@@ -606,6 +610,9 @@ int falco_init(int argc, char **argv)
 			case 'U':
 				buffered_outputs = false;
 				buffered_cmdline = true;
+				break;
+			case 'u':
+				userspace = true;
 				break;
 			case 'v':
 				verbose = true;
@@ -1091,7 +1098,17 @@ int falco_init(int argc, char **argv)
 		}
 		else
 		{
-			open_t open_cb = [](sinsp* inspector) {
+			open_t open_cb = [&userspace](sinsp* inspector)
+			{
+				if(userspace)
+				{
+					// open_udig() is the underlying method used in the capture code to parse userspace events from the kernel.
+					//
+					// Falco uses a ptrace(2) based userspace implementation.
+					// Regardless of the implementation, the underlying method remains the same.
+					inspector->open_udig();
+					return;
+				}
 				inspector->open();
 			};
 			open_t open_nodriver_cb = [](sinsp* inspector) {
@@ -1116,11 +1133,17 @@ int falco_init(int argc, char **argv)
 			}
 			catch(sinsp_exception &e)
 			{
-				if(system("modprobe " PROBE_NAME " > /dev/null 2> /dev/null"))
+				// If syscall input source is enabled and not through userspace instrumentation
+				if (!disable_syscall && !userspace)
 				{
-					falco_logger::log(LOG_ERR, "Unable to load the driver. Exiting.\n");
+					// Try to insert the Falco kernel module
+					if(system("modprobe " PROBE_NAME " > /dev/null 2> /dev/null"))
+					{
+						falco_logger::log(LOG_ERR, "Unable to load the driver. Exiting.\n");
+					}
+					open_f(inspector);
 				}
-				open_f(inspector);
+				rethrow_exception(current_exception());
 			}
 		}
 
@@ -1139,7 +1162,7 @@ int falco_init(int argc, char **argv)
 		duration = ((double)clock()) / CLOCKS_PER_SEC;
 
 		//
-		// run k8s, if required
+		// Run k8s, if required
 		//
 		if(k8s_api)
 		{
@@ -1178,7 +1201,7 @@ int falco_init(int argc, char **argv)
 		}
 
 		//
-		// run mesos, if required
+		// Run mesos, if required
 		//
 		if(mesos_api)
 		{
