@@ -110,8 +110,8 @@ else()
     grpc
     DEPENDS openssl
     GIT_REPOSITORY https://github.com/grpc/grpc.git
-    GIT_TAG v1.25.0
-    GIT_SUBMODULES "third_party/protobuf third_party/zlib third_party/cares/cares"
+    GIT_TAG v1.31.1
+    GIT_SUBMODULES "third_party/protobuf third_party/zlib third_party/cares/cares third_party/abseil-cpp third_party/re2"
     BUILD_IN_SOURCE 1
     BUILD_BYPRODUCTS ${GRPC_LIB} ${GRPCPP_LIB}
     INSTALL_COMMAND ""
@@ -121,6 +121,8 @@ else()
       HAS_SYSTEM_ZLIB=false
       HAS_SYSTEM_PROTOBUF=false
       HAS_SYSTEM_CARES=false
+      HAS_EMBEDDED_OPENSSL_ALPN=false
+      HAS_SYSTEM_OPENSSL_ALPN=true
       PKG_CONFIG_PATH=${OPENSSL_BUNDLE_DIR}
       PKG_CONFIG=${PKG_CONFIG_EXECUTABLE}
       PATH=${PROTOC_DIR}:$ENV{PATH}

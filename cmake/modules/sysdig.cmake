@@ -18,22 +18,23 @@ set(SYSDIG_CMAKE_WORKING_DIR "${CMAKE_BINARY_DIR}/sysdig-repo")
 if(USE_BUNDLED_DEPS)
   # explicitly force this dependency to use the bundled OpenSSL
   set(USE_BUNDLED_OPENSSL ON)
+  set(USE_BUNDLED_JQ ON)
 endif()
 
 file(MAKE_DIRECTORY ${SYSDIG_CMAKE_WORKING_DIR})
 
-# The sysdig git reference (branch name, commit hash, or tag)
-# To update sysdig version for the next release, change the default below
-# In case you want to test against another sysdig version just pass the variable - ie., `cmake -DSYSDIG_VERSION=dev ..`
+# The sysdig git reference (branch name, commit hash, or tag) To update sysdig version for the next release, change the
+# default below In case you want to test against another sysdig version just pass the variable - ie., `cmake
+# -DSYSDIG_VERSION=dev ..`
 if(NOT SYSDIG_VERSION)
-  set(SYSDIG_VERSION "113c22c4693fac5cc2db1b115c2f1ee0b6b701b7")
-  set(SYSDIG_CHECKSUM "SHA256=48fb9ec586ec217d8509e4d20a94e911a9679c78ddc23877d07c6dda26ff34db")
+  set(SYSDIG_VERSION "37aab8debf50140ca8796cfb732218d3ab123640")
+  set(SYSDIG_CHECKSUM "SHA256=48482e8299c092899f2516cc5a1db09fa2747fd03ec29fa555f42b62f1e38aeb")
 endif()
 set(PROBE_VERSION "${SYSDIG_VERSION}")
 
 # cd /path/to/build && cmake /path/to/source
-execute_process(COMMAND "${CMAKE_COMMAND}" -DSYSDIG_VERSION=${SYSDIG_VERSION} -DSYSDIG_CHECKSUM=${SYSDIG_CHECKSUM} ${SYSDIG_CMAKE_SOURCE_DIR} WORKING_DIRECTORY ${SYSDIG_CMAKE_WORKING_DIR})
-
+execute_process(COMMAND "${CMAKE_COMMAND}" -DSYSDIG_VERSION=${SYSDIG_VERSION} -DSYSDIG_CHECKSUM=${SYSDIG_CHECKSUM}
+                        ${SYSDIG_CMAKE_SOURCE_DIR} WORKING_DIRECTORY ${SYSDIG_CMAKE_WORKING_DIR})
 
 # todo(leodido, fntlnz) > use the following one when CMake version will be >= 3.13
 
