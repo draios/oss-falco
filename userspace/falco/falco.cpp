@@ -43,8 +43,10 @@ limitations under the License.
 #include "falco_engine.h"
 #include "config_falco.h"
 #include "statsfilewriter.h"
+#ifndef MINIMAL_BUILD
 #include "webserver.h"
 #include "grpc_server.h"
+#endif
 #include "banned.h" // This raises a compilation error when certain functions are used
 
 typedef function<void(sinsp* inspector)> open_t;
@@ -104,6 +106,7 @@ static void usage()
 	   "                               Can not be specified with -t.\n"
 	   " -e <events_file>              Read the events from <events_file> (in .scap format for sinsp events, or jsonl for\n"
 	   "                               k8s audit events) instead of tapping into live.\n"
+#ifndef MINIMAL_BUILD
 	   " -k <url>, --k8s-api <url>\n"
 	   "                               Enable Kubernetes support by connecting to the API server specified as argument.\n"
        "                               E.g. \"http://admin:password@127.0.0.1:8080\".\n"
@@ -117,15 +120,18 @@ static void usage()
 	   "                               for this option, it will be interpreted as the name of a file containing bearer token.\n"
 	   "                               Note that the format of this command-line option prohibits use of files whose names contain\n"
 	   "                               ':' or '#' characters in the file name.\n"
+#endif
 	   " -L                            Show the name and description of all rules and exit.\n"
 	   " -l <rule>                     Show the name and description of the rule with name <rule> and exit.\n"
 	   " --list [<source>]             List all defined fields. If <source> is provided, only list those fields for\n"
 	   "                               the source <source>. Current values for <source> are \"syscall\", \"k8s_audit\"\n"
+#ifndef MINIMAL_BUILD
 	   " -m <url[,marathon_url]>, --mesos-api <url[,marathon_url]>\n"
 	   "                               Enable Mesos support by connecting to the API server\n"
 	   "                               specified as argument. E.g. \"http://admin:password@127.0.0.1:5050\".\n"
 	   "                               Marathon url is optional and defaults to Mesos address, port 8080.\n"
 	   "                               The API servers can also be specified via the environment variable FALCO_MESOS_API.\n"
+#endif
 	   " -M <num_seconds>              Stop collecting after <num_seconds> reached.\n"
 	   " -N                            When used with --list, only print field names.\n"
 	   " -o, --option <key>=<val>      Set the value of option <key> to <val>. Overrides values in configuration file.\n"
@@ -185,6 +191,7 @@ static void display_fatal_err(const string &msg)
 // Splitting into key=value or key.subkey=value will be handled by configuration class.
 std::list<string> cmdline_options;
 
+#ifndef MINIMAL_BUILD
 // Read a jsonl file containing k8s audit events and pass each to the engine.
 void read_k8s_audit_trace_file(falco_engine *engine,
 			       falco_outputs *outputs,
@@ -213,6 +220,7 @@ void read_k8s_audit_trace_file(falco_engine *engine,
 		}
 	}
 }
+#endif
 
 static std::string read_file(std::string filename)
 {
@@ -429,9 +437,11 @@ int falco_init(int argc, char **argv)
 	bool verbose = false;
 	bool names_only = false;
 	bool all_events = false;
+#ifndef MINIMAL_BUILD
 	string* k8s_api = 0;
 	string* k8s_api_cert = 0;
 	string* mesos_api = 0;
+#endif
 	string output_format = "";
 	uint32_t snaplen = 0;
 	bool replace_container_info = false;
@@ -461,9 +471,11 @@ int falco_init(int argc, char **argv)
 	double duration;
 	scap_stats cstats;
 
+#ifndef MINIMAL_BUILD
 	falco_webserver webserver;
 	falco::grpc::server grpc_server;
 	std::thread grpc_server_thread;
+#endif
 
 	static struct option long_options[] =
 	{
@@ -530,8 +542,10 @@ int falco_init(int argc, char **argv)
 				break;
 			case 'e':
 				trace_filename = optarg;
+#ifndef MINIMAL_BUILD
 				k8s_api = new string();
 				mesos_api = new string();
+#endif
 				break;
 			case 'F':
 				list_flds = optarg;
@@ -539,21 +553,25 @@ int falco_init(int argc, char **argv)
 			case 'i':
 				print_ignored_events = true;
 				break;
+#ifndef MINIMAL_BUILD
 			case 'k':
 				k8s_api = new string(optarg);
 				break;
 			case 'K':
 				k8s_api_cert = new string(optarg);
 				break;
+#endif
 			case 'L':
 				describe_all_rules = true;
 				break;
 			case 'l':
 				describe_rule = optarg;
 				break;
+#ifndef MINIMAL_BUILD
 			case 'm':
 				mesos_api = new string(optarg);
 				break;
+#endif
 			case 'M':
 				duration_to_tot = atoi(optarg);
 				if(duration_to_tot <= 0)
@@ -1074,6 +1092,12 @@ int falco_init(int argc, char **argv)
 
 			if(!trace_is_scap)
 			{
+#ifdef MINIMAL_BUILD
+				// Note that the webserver is not available when MINIMAL_BUILD is defined.
+				fprintf(stderr, "Cannot use k8s audit events trace file with a minimal Falco build");
+				result = EXIT_FAILURE;
+				goto exit;
+#else
 				try {
 					string line;
 					nlohmann::json j;
@@ -1098,6 +1122,7 @@ int falco_init(int argc, char **argv)
 					result = EXIT_FAILURE;
 					goto exit;
 				}
+#endif
 			}
 		}
 		else
@@ -1168,6 +1193,7 @@ int falco_init(int argc, char **argv)
 
 		duration = ((double)clock()) / CLOCKS_PER_SEC;
 
+#ifndef MINIMAL_BUILD
 		//
 		// Run k8s, if required
 		//
@@ -1251,12 +1277,15 @@ int falco_init(int argc, char **argv)
 				grpc_server.run();
 			});
 		}
+#endif
 
 		if(!trace_filename.empty() && !trace_is_scap)
 		{
+#ifndef MINIMAL_BUILD			
 			read_k8s_audit_trace_file(engine,
 						  outputs,
 						  trace_filename);
+#endif
 		}
 		else
 		{
@@ -1302,12 +1331,14 @@ int falco_init(int argc, char **argv)
 		inspector->close();
 		engine->print_stats();
 		sdropmgr.print_stats();
+#ifndef MINIMAL_BUILD
 		webserver.stop();
 		if(grpc_server_thread.joinable())
 		{
 			grpc_server.shutdown();
 			grpc_server_thread.join();
 		}
+#endif
 	}
 	catch(exception &e)
 	{
@@ -1315,12 +1346,14 @@ int falco_init(int argc, char **argv)
 
 		result = EXIT_FAILURE;
 
+#ifndef MINIMAL_BUILD
 		webserver.stop();
 		if(grpc_server_thread.joinable())
 		{
 			grpc_server.shutdown();
 			grpc_server_thread.join();
 		}
+#endif
 	}
 
 exit:
