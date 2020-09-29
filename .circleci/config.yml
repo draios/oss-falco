@@ -306,6 +306,33 @@ jobs:
       - run:
           name: Execute driver-loader integration tests
           command: /tmp/ws/source/falco/test/driver-loader/run_test.sh /tmp/ws/build/release/
+  # Code quality
+  "quality/static-analysis":
+    docker:
+      - image: falcosecurity/falco-builder:latest
+        environment:
+          BUILD_TYPE: "release"
+    steps:
+      - run:
+          name: Install cppcheck
+          command: |
+            yum update -y
+            yum install epel-release -y
+            yum install cppcheck cppcheck-htmlreport -y
+      - checkout:
+          path: /source/falco
+      - run:
+          name: Prepare project
+          command: /usr/bin/entrypoint cmake
+      - run:
+          name: cppcheck
+          command: /usr/bin/entrypoint cppcheck
+      - run:
+          name: cppcheck html report
+          command: /usr/bin/entrypoint cppcheck_htmlreport
+      - store_artifacts:
+          path: /build/release/static-analysis-reports
+          destination: /static-analysis-reports
   # Sign rpm packages
   "rpm/sign":
     docker:
@@ -546,6 +573,7 @@ workflows:
           requires:
             - "publish/packages-dev"
             - "tests/driver-loader/integration"
+      - "quality/static-analysis"
   release:
     jobs:
       - "build/musl":
