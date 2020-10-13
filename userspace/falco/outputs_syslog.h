@@ -1,5 +1,5 @@
 /*
-Copyright (C) 2019 The Falco Authors.
+Copyright (C) 2020 The Falco Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -16,22 +16,20 @@ limitations under the License.
 
 #pragma once
 
-#include "sinsp.h"
-#include <syslog.h>
+#include "outputs.h"
 
-class falco_logger
+namespace falco
 {
- public:
+namespace outputs
+{
 
-	static void set_time_format_iso_8601(bool val);
+class output_syslog : public abstract_output
+{
+	void output_event(gen_event *evt, std::string &rule, std::string &source,
+			  falco_common::priority_type priority, std::string &format, std::string &msg);
 
-	// Will throw exception if level is unknown.
-	static void set_level(string &level);
-
-	static void log(int priority, const string msg);
-
-	static int level;
-	static bool log_stderr;
-	static bool log_syslog;
-	static bool time_format_iso_8601;
+	void output_msg(falco_common::priority_type priority, std::string &msg);
 };
+
+} // namespace outputs
+} // namespace falco

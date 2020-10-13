@@ -47,6 +47,10 @@ add_executable(
   configuration.cpp
   logger.cpp
   falco_outputs.cpp
+  outputs_file.cpp
+  outputs_program.cpp
+  outputs_stdout.cpp
+  outputs_syslog.cpp
   event_drops.cpp
   statsfilewriter.cpp
   falco.cpp
@@ -57,6 +61,12 @@ else()
     configuration.cpp
     logger.cpp
     falco_outputs.cpp
+    outputs_file.cpp
+    outputs_grpc.cpp
+    outputs_http.cpp
+    outputs_program.cpp
+    outputs_stdout.cpp
+    outputs_syslog.cpp
     event_drops.cpp
     statsfilewriter.cpp
     falco.cpp
@@ -155,8 +165,3 @@ if(MUSL_OPTIMIZED_BUILD AND CMAKE_BUILD_TYPE STREQUAL "release")
 endif()
 
 install(TARGETS falco DESTINATION ${FALCO_BIN_DIR})
-install(
-  DIRECTORY lua
-  DESTINATION ${FALCO_SHARE_DIR}
-  FILES_MATCHING
-  PATTERN *.lua)
