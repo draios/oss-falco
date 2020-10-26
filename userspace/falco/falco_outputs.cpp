@@ -1,5 +1,5 @@
 /*
-Copyright (C) 2019 The Falco Authors.
+Copyright (C) 2020 The Falco Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -38,8 +38,7 @@ limitations under the License.
 
 using namespace std;
 
-falco_outputs::falco_outputs(falco_engine *engine):
-	m_falco_engine(engine),
+falco_outputs::falco_outputs():
 	m_initialized(false),
 	m_buffered(true),
 	m_json_output(false),
@@ -64,12 +63,6 @@ void falco_outputs::init(bool json_output,
 			 uint32_t rate, uint32_t max_burst, bool buffered,
 			 bool time_format_iso_8601, string hostname)
 {
-	// The engine must have been given an inspector by now.
-	if(!m_inspector)
-	{
-		throw falco_exception("No inspector provided");
-	}
-
 	m_json_output = json_output;
 
 	// Note that falco_formats is already initialized by the engine,
@@ -123,7 +116,7 @@ void falco_outputs::add_output(falco::outputs::config oc)
 		throw falco_exception("Output not supported: " + oc.name);
 	}
 
-	oo->init(oc, m_buffered, m_time_format_iso_8601, m_hostname);
+	oo->init(oc, m_buffered, m_hostname);
 	m_outputs.push_back(oo);
 }
 

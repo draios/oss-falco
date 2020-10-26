@@ -1,5 +1,5 @@
 /*
-Copyright (C) 2019 The Falco Authors.
+Copyright (C) 2020 The Falco Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -31,10 +31,10 @@ limitations under the License.
 // falco output engine. The falco rules engine is implemented by a
 // separate class falco_engine.
 //
-class falco_outputs : public falco_common
+class falco_outputs
 {
 public:
-	falco_outputs(falco_engine *engine);
+	falco_outputs();
 	virtual ~falco_outputs();
 
 	void init(bool json_output,
@@ -61,8 +61,6 @@ public:
 	void reopen_outputs();
 
 private:
-	falco_engine *m_falco_engine;
-
 	bool m_initialized;
 
 	std::vector<falco::outputs::abstract_output *> m_outputs;
