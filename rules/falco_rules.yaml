@@ -1213,6 +1213,9 @@
        fd.name startswith /etc/ssh/ssh_monitor_config_ or
        fd.name startswith /etc/ssh/ssh_config_))
 
+- macro: multipath_writing_conf
+  condition: (proc.name = multipath and fd.name startswith /etc/multipath/)
+
 # Add conditions to this macro (probably in a separate file,
 # overwriting this macro) to allow for specific combinations of
 # programs writing below specific directories below
@@ -1333,6 +1336,7 @@
     and not automount_using_mtab
     and not mcafee_writing_cma_d
     and not avinetworks_supervisor_writing_ssh
+    and not multipath_writing_conf
 
 - rule: Write below etc
   desc: an attempt to write to any file below /etc
@@ -3041,6 +3045,16 @@
   output: Outbound connection to C2 server (command=%proc.cmdline connection=%fd.name user=%user.name user_loginuid=%user.loginuid container_id=%container.id image=%container.image.repository)
   priority: WARNING
   tags: [network]
+
+- list: white_listed_modules
+  items: []
+    
+- rule: Linux Kernel Module Injection Detected
+  desc: Detect kernel module was injected (from container).
+  condition: spawned_process and container and proc.name=insmod and not proc.args in (white_listed_modules)
+  output: Linux Kernel Module injection using insmod detected (user=%user.name user_loginuid=%user.loginuid parent_process=%proc.pname module=%proc.args)
+  priority: WARNING
+  tags: [process]
 
 # Application rules have moved to application_rules.yaml. Please look
 # there if you want to enable them by adding to
