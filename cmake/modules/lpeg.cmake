@@ -10,19 +10,19 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 #
-cmake_minimum_required(VERSION 3.5.1)
 
-project(sysdig-repo NONE)
-
-include(ExternalProject)
-message(STATUS "Driver version: ${SYSDIG_VERSION}")
-
+set(LPEG_SRC "${PROJECT_BINARY_DIR}/lpeg-prefix/src/lpeg")
+set(LPEG_LIB "${PROJECT_BINARY_DIR}/lpeg-prefix/src/lpeg/build/lpeg.a")
+message(STATUS "Using bundled lpeg in '${LPEG_SRC}'")
+set(LPEG_DEPENDENCIES "")
+list(APPEND LPEG_DEPENDENCIES "luajit")
 ExternalProject_Add(
-  sysdig
-  URL "https://github.com/draios/sysdig/archive/${SYSDIG_VERSION}.tar.gz"
-  URL_HASH "${SYSDIG_CHECKSUM}"
+  lpeg
+  DEPENDS ${LPEG_DEPENDENCIES}
+  URL "http://www.inf.puc-rio.br/~roberto/lpeg/lpeg-1.0.2.tar.gz"
+  URL_HASH "SHA256=48d66576051b6c78388faad09b70493093264588fcd0f258ddaab1cdd4a15ffe"
+  BUILD_COMMAND LUA_INCLUDE=${LUAJIT_INCLUDE} "${PROJECT_SOURCE_DIR}/scripts/build-lpeg.sh" "${LPEG_SRC}/build"
+  BUILD_IN_SOURCE 1
+  BUILD_BYPRODUCTS ${LPEG_LIB}
   CONFIGURE_COMMAND ""
-  BUILD_COMMAND ""
-  INSTALL_COMMAND ""
-  TEST_COMMAND ""
-  PATCH_COMMAND patch -p1 -i ${CMAKE_CURRENT_SOURCE_DIR}/patch/libscap.patch && patch -p1 -i ${CMAKE_CURRENT_SOURCE_DIR}/patch/luajit.patch)
+  INSTALL_COMMAND "")
