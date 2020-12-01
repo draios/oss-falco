@@ -25,6 +25,7 @@ limitations under the License.
 #include "token_bucket.h"
 #include "falco_engine.h"
 #include "outputs.h"
+#include "tbb/concurrent_queue.h"
 
 //
 // This class acts as the primary interface between a program and the
@@ -39,24 +40,24 @@ public:
 
 	void init(bool json_output,
 		  bool json_include_output_property,
+		  uint32_t timeout,
 		  uint32_t rate, uint32_t max_burst, bool buffered,
 		  bool time_format_iso_8601, std::string hostname);
 
 	void add_output(falco::outputs::config oc);
 
-	//
-	// evt is an event that has matched some rule. Pass the event
-	// to all configured outputs.
-	//
+	// Format then send the event to all configured outputs (`evt` is an event that has matched some rule).
 	void handle_event(gen_event *evt, std::string &rule, std::string &source,
 			  falco_common::priority_type priority, std::string &format);
 
-	// Send a generic message to all outputs. Not necessarily associated with any event.
+	// Format then send a generic message to all outputs. Not necessarily associated with any event.
 	void handle_msg(uint64_t now,
 			falco_common::priority_type priority,
 			std::string &msg,
 			std::string &rule,
 			std::map<std::string, std::string> &output_fields);
+
+	void cleanup_outputs();
 
 	void reopen_outputs();
 
@@ -71,5 +72,28 @@ private:
 	bool m_buffered;
 	bool m_json_output;
 	bool m_time_format_iso_8601;
+	std::chrono::milliseconds m_timeout;
 	std::string m_hostname;
+
+	enum ctrl_msg_type
+	{
+		CTRL_MSG_STOP = 0,
+		CTRL_MSG_OUTPUT = 1,
+		CTRL_MSG_CLEANUP = 2,
+		CTRL_MSG_REOPEN = 3,
+	};
+
+	struct ctrl_msg : falco::outputs::message
+	{
+		ctrl_msg_type type;
+	};
+
+	typedef tbb::concurrent_bounded_queue<ctrl_msg> falco_outputs_cbq;
+
+	falco_outputs_cbq m_queue;
+
+	std::thread m_worker_thread;
+	inline void push(ctrl_msg_type cmt);
+	void worker() noexcept;
+	void stop_worker();
 };

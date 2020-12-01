@@ -24,6 +24,7 @@ limitations under the License.
 
 #include "formats.h"
 #include "logger.h"
+#include "watchdog.h"
 
 #include "outputs_file.h"
 #include "outputs_program.h"
@@ -51,18 +52,26 @@ falco_outputs::~falco_outputs()
 {
 	if(m_initialized)
 	{
-		for(auto it = m_outputs.cbegin(); it != m_outputs.cend(); ++it)
+		this->stop_worker();
+		for(auto o : m_outputs)
 		{
-			(*it)->cleanup();
+			delete o;
 		}
 	}
 }
 
 void falco_outputs::init(bool json_output,
-			 bool json_include_output_property,
-			 uint32_t rate, uint32_t max_burst, bool buffered,
-			 bool time_format_iso_8601, string hostname)
+		  bool json_include_output_property,
+		  uint32_t timeout,
+		  uint32_t rate, uint32_t max_burst, bool buffered,
+		  bool time_format_iso_8601, std::string hostname)
 {
+	// Cannot be initialized more than one time.
+	if(m_initialized)
+	{
+		throw falco_exception("falco_outputs already initialized");
+	}
+
 	m_json_output = json_output;
 
 	// Note that falco_formats is already initialized by the engine,
@@ -71,17 +80,29 @@ void falco_outputs::init(bool json_output,
 	falco_formats::s_json_output = json_output;
 	falco_formats::s_json_include_output_property = json_include_output_property;
 
+	m_timeout = std::chrono::milliseconds(timeout);
+
 	m_notifications_tb.init(rate, max_burst);
 
 	m_buffered = buffered;
 	m_time_format_iso_8601 = time_format_iso_8601;
 	m_hostname = hostname;
 
+	m_worker_thread = std::thread(&falco_outputs::worker, this);
+
 	m_initialized = true;
 }
 
+// This function has to be called after init() since some configuration settings
+// need to be passed to the output plugins. Then, although the worker has started,
+// the worker is still on hold, waiting for a message.
+// Thus it is still safe to call add_output() before any message has been enqueued.
 void falco_outputs::add_output(falco::outputs::config oc)
 {
+	if(!m_initialized)
+	{
+		throw falco_exception("cannot add output: falco_outputs not initialized yet");
+	}
 
 	falco::outputs::abstract_output *oo;
 
@@ -129,6 +150,12 @@ void falco_outputs::handle_event(gen_event *evt, string &rule, string &source,
 		return;
 	}
 
+	falco_outputs::ctrl_msg cmsg = {};
+	cmsg.ts = evt->get_ts();
+	cmsg.priority = priority;
+	cmsg.source = source;
+	cmsg.rule = rule;
+
 	string sformat;
 	if(source == "syscall")
 	{
@@ -163,35 +190,38 @@ void falco_outputs::handle_event(gen_event *evt, string &rule, string &source,
 		sformat += " " + format;
 	}
 
-	string msg;
-	msg = falco_formats::format_event(evt, rule, source, falco_common::priority_names[priority], sformat);
+	cmsg.msg = falco_formats::format_event(evt, rule, source, falco_common::priority_names[priority], sformat);
+	cmsg.fields = falco_formats::resolve_tokens(evt, source, sformat);
 
-	for(auto it = m_outputs.cbegin(); it != m_outputs.cend(); ++it)
-	{
-		(*it)->output_event(evt, rule, source, priority, sformat, msg);
-	}
+	cmsg.type = ctrl_msg_type::CTRL_MSG_OUTPUT;
+	m_queue.push(cmsg);
 }
 
-void falco_outputs::handle_msg(uint64_t now,
+void falco_outputs::handle_msg(uint64_t ts,
 			       falco_common::priority_type priority,
 			       std::string &msg,
 			       std::string &rule,
 			       std::map<std::string, std::string> &output_fields)
 {
-	std::string full_msg;
+	falco_outputs::ctrl_msg cmsg = {};
+	cmsg.ts = ts;
+	cmsg.priority = priority;
+	cmsg.source = "internal";
+	cmsg.rule = rule;
+	cmsg.fields = output_fields;
 
 	if(m_json_output)
 	{
 		nlohmann::json jmsg;
 
 		// Convert the time-as-nanoseconds to a more json-friendly ISO8601.
-		time_t evttime = now / 1000000000;
+		time_t evttime = ts / 1000000000;
 		char time_sec[20]; // sizeof "YYYY-MM-DDTHH:MM:SS"
 		char time_ns[12];  // sizeof ".sssssssssZ"
 		string iso8601evttime;
 
 		strftime(time_sec, sizeof(time_sec), "%FT%T", gmtime(&evttime));
-		snprintf(time_ns, sizeof(time_ns), ".%09luZ", now % 1000000000);
+		snprintf(time_ns, sizeof(time_ns), ".%09luZ", ts % 1000000000);
 		iso8601evttime = time_sec;
 		iso8601evttime += time_ns;
 
@@ -201,15 +231,15 @@ void falco_outputs::handle_msg(uint64_t now,
 		jmsg["time"] = iso8601evttime;
 		jmsg["output_fields"] = output_fields;
 
-		full_msg = jmsg.dump();
+		cmsg.msg = jmsg.dump();
 	}
 	else
 	{
 		std::string timestr;
 		bool first = true;
 
-		sinsp_utils::ts_to_string(now, &timestr, false, true);
-		full_msg = timestr + ": " + falco_common::priority_names[priority] + " " + msg + " (";
+		sinsp_utils::ts_to_string(ts, &timestr, false, true);
+		cmsg.msg = timestr + ": " + falco_common::priority_names[priority] + " " + msg + " (";
 		for(auto &pair : output_fields)
 		{
 			if(first)
@@ -218,23 +248,95 @@ void falco_outputs::handle_msg(uint64_t now,
 			}
 			else
 			{
-				full_msg += " ";
+				cmsg.msg += " ";
 			}
-			full_msg += pair.first + "=" + pair.second;
+			cmsg.msg += pair.first + "=" + pair.second;
 		}
-		full_msg += ")";
+		cmsg.msg += ")";
 	}
 
-	for(auto it = m_outputs.cbegin(); it != m_outputs.cend(); ++it)
-	{
-		(*it)->output_msg(priority, full_msg);
-	}
+	cmsg.type = ctrl_msg_type::CTRL_MSG_OUTPUT;
+	m_queue.push(cmsg);
+}
+
+void falco_outputs::cleanup_outputs()
+{
+	this->push(falco_outputs::ctrl_msg_type::CTRL_MSG_CLEANUP);
 }
 
 void falco_outputs::reopen_outputs()
 {
-	for(auto it = m_outputs.cbegin(); it != m_outputs.cend(); ++it)
+	this->push(falco_outputs::ctrl_msg_type::CTRL_MSG_REOPEN);
+}
+
+void falco_outputs::stop_worker()
+{
+	watchdog<void *> wd;
+	wd.start([&](void *) -> void {
+		falco_logger::log(LOG_NOTICE, "output channels still blocked, discarding all remaining notifications\n");
+		m_queue.clear();
+		this->push(falco_outputs::ctrl_msg_type::CTRL_MSG_STOP);
+	});
+	wd.set_timeout(m_timeout, nullptr);
+
+	this->push(falco_outputs::ctrl_msg_type::CTRL_MSG_STOP);
+	if(m_worker_thread.joinable())
 	{
-		(*it)->reopen();
+		m_worker_thread.join();
 	}
+}
+
+inline void falco_outputs::push(ctrl_msg_type cmt)
+{
+	falco_outputs::ctrl_msg cmsg = {};
+	cmsg.type = cmt;
+	m_queue.push(cmsg);
+}
+
+// todo(leogr,leodido): this function is not supposed to throw exceptions, and with "noexcept",
+// the program is terminated if that occurs. Although that's the wanted behavior,
+// we still need to improve the error reporting since some inner functions can throw exceptions.
+void falco_outputs::worker() noexcept
+{
+	watchdog<std::string> wd;
+	wd.start([&](std::string payload) -> void {
+		falco_logger::log(LOG_CRIT, "\"" + payload + "\" output timeout, all output channels are blocked\n");
+	});
+
+	auto timeout = m_timeout;
+
+	falco_outputs::ctrl_msg cmsg;
+	do
+	{
+		// Block until a message becomes available.
+		m_queue.pop(cmsg);
+
+		for(const auto o : m_outputs)
+		{
+			wd.set_timeout(timeout, o->get_name());
+			try
+			{
+				switch(cmsg.type)
+				{
+					case ctrl_msg_type::CTRL_MSG_OUTPUT:
+						o->output(&cmsg);
+						break;
+					case ctrl_msg_type::CTRL_MSG_CLEANUP:
+					case ctrl_msg_type::CTRL_MSG_STOP:
+						o->cleanup();
+						break;
+					case ctrl_msg_type::CTRL_MSG_REOPEN:
+						o->reopen();
+						break;
+					default:
+						falco_logger::log(LOG_DEBUG, "Outputs worker received an unknown message type\n");	
+				}
+			}
+			catch(const exception &e)
+			{
+				falco_logger::log(LOG_ERR, o->get_name() + ": " + string(e.what()) + "\n");
+			}
+		}
+		wd.cancel_timeout();
+	} while(cmsg.type != ctrl_msg_type::CTRL_MSG_STOP);
 }
