@@ -126,6 +126,31 @@ function set_output(output_format, state)
    end
 end
 
+-- This should be keep in sync with parser.lua
+defined_comp_operators = {
+   ["="]=1,
+   ["=="] = 1,
+   ["!="] = 1,
+   ["<="] = 1,
+   [">="] = 1,
+   ["<"] = 1,
+   [">"] = 1,
+   ["contains"] = 1,
+   ["icontains"] = 1,
+   ["glob"] = 1,
+   ["startswith"] = 1,
+   ["endswith"] = 1,
+   ["in"] = 1,
+   ["intersects"] = 1,
+   ["pmatch"] = 1
+}
+
+defined_list_comp_operators = {
+   ["in"] = 1,
+   ["intersects"] = 1,
+   ["pmatch"] = 1
+}
+
 -- Note that the rules_by_name and rules_by_idx refer to the same rule
 -- object. The by_name index is used for things like describing rules,
 -- and the by_idx index is used to map the relational node index back
@@ -253,18 +278,125 @@ function get_lines(rules_lines, row, num_lines)
    return ret
 end
 
+function quote_item(item)
+
+   -- Add quotes if the string contains spaces and doesn't start/end
+   -- w/ quotes
+   if string.find(item, " ") then
+      if string.sub(item, 1, 1) ~= "'" and string.sub(item, 1, 1) ~= '"' then
+	 item = "\""..item.."\""
+      end
+   end
+
+   return item
+end
+
+function paren_item(item)
+   if string.sub(item, 1, 1) ~= "(" then
+      item = "("..item..")"
+   end
+
+   return item
+end
+
 function build_error(rules_lines, row, num_lines, err)
    local ret = err.."\n---\n"..get_lines(rules_lines, row, num_lines).."---"
 
-   return ret
+   return {ret}
 end
 
 function build_error_with_context(ctx, err)
    local ret = err.."\n---\n"..ctx.."---"
-   return ret
+   return {ret}
 end
 
+function validate_exception_item_multi_fields(eitem, context)
+
+   local name = eitem['name']
+   local fields = eitem['fields']
+   local values = eitem['values']
+   local comps = eitem['comps']
+
+   if comps == nil then
+      comps = {}
+      for c=1,#fields do
+	 table.insert(comps, "=")
+      end
+      eitem['comps'] = comps
+   else
+      if #fields ~= #comps then
+	 return false, build_error_with_context(context, "Rule exception item "..name..": fields and comps lists must have equal length"), warnings
+      end
+   end
+   for k, fname in ipairs(fields) do
+      if not is_defined_filter(fname) then
+	 return false, build_error_with_context(context, "Rule exception item "..name..": field name "..fname.." is not a supported filter field"), warnings
+      end
+   end
+   for k, comp in ipairs(comps) do
+      if defined_comp_operators[comp] == nil then
+	 return false, build_error_with_context(context, "Rule exception item "..name..": comparison operator "..comp.." is not a supported comparison operator"), warnings
+      end
+   end
+end
+
+function validate_exception_item_single_field(eitem, context)
+
+   local name = eitem['name']
+   local fields = eitem['fields']
+   local values = eitem['values']
+   local comps = eitem['comps']
+
+   if comps == nil then
+      eitem['comps'] = "in"
+      comps = eitem['comps']
+   else
+      if type(fields) ~= "string" or type(comps) ~= "string" then
+	 return false, build_error_with_context(context, "Rule exception item "..name..": fields and comps must both be strings"), warnings
+      end
+   end
+   if not is_defined_filter(fields) then
+      return false, build_error_with_context(context, "Rule exception item "..name..": field name "..fields.." is not a supported filter field"), warnings
+   end
+   if defined_comp_operators[comps] == nil then
+      return false, build_error_with_context(context, "Rule exception item "..name..": comparison operator "..comps.." is not a supported comparison operator"), warnings
+   end
+end
+
+function is_defined_filter(filter)
+   if defined_noarg_filters[filter] ~= nil then
+      return true
+   else
+      bracket_idx = string.find(filter, "[", 1, true)
+
+      if bracket_idx ~= nil then
+	 subfilter = string.sub(filter, 1, bracket_idx-1)
+
+	 if defined_arg_filters[subfilter] ~= nil then
+	    return true
+	 end
+      end
+
+      dot_idx = string.find(filter, ".", 1, true)
+
+      while dot_idx ~= nil do
+	 subfilter = string.sub(filter, 1, dot_idx-1)
+
+	 if defined_arg_filters[subfilter] ~= nil then
+	    return true
+	 end
+
+	 dot_idx = string.find(filter, ".", dot_idx+1, true)
+      end
+   end
+
+   return false
+end
+
+
 function load_rules_doc(rules_mgr, doc, load_state)
+
+   local warnings = {}
 
    -- Iterate over yaml list. In this pass, all we're doing is
    -- populating the set of rules, macros, and lists. We're not
@@ -279,7 +411,7 @@ function load_rules_doc(rules_mgr, doc, load_state)
 					load_state.indices[load_state.cur_item_idx])
 
       if (not (type(v) == "table")) then
-	 return false, build_error_with_context(context, "Unexpected element of type " ..type(v)..". Each element should be a yaml associative array.")
+	 return false, build_error_with_context(context, "Unexpected element of type " ..type(v)..". Each element should be a yaml associative array."), warnings
       end
 
       v['context'] = context
@@ -291,13 +423,13 @@ function load_rules_doc(rules_mgr, doc, load_state)
 	 end
 
 	 if falco_rules.engine_version(rules_mgr) < v['required_engine_version'] then
-	    return false, build_error_with_context(v['context'], "Rules require engine version "..v['required_engine_version']..", but engine version is "..falco_rules.engine_version(rules_mgr))
+	    return false, build_error_with_context(v['context'], "Rules require engine version "..v['required_engine_version']..", but engine version is "..falco_rules.engine_version(rules_mgr)), warnings
 	 end
 
       elseif (v['macro']) then
 
 	 if (v['macro'] == nil or type(v['macro']) == "table") then
-	    return false, build_error_with_context(v['context'], "Macro name is empty")
+	    return false, build_error_with_context(v['context'], "Macro name is empty"), warnings
 	 end
 
 	 if v['source'] == nil then
@@ -310,7 +442,7 @@ function load_rules_doc(rules_mgr, doc, load_state)
 
 	 for j, field in ipairs({'condition'}) do
 	    if (v[field] == nil) then
-	       return false, build_error_with_context(v['context'], "Macro must have property "..field)
+	       return false, build_error_with_context(v['context'], "Macro must have property "..field), warnings
 	    end
 	 end
 
@@ -323,7 +455,7 @@ function load_rules_doc(rules_mgr, doc, load_state)
 
 	 if append then
 	    if state.macros_by_name[v['macro']] == nil then
-	       return false, build_error_with_context(v['context'], "Macro " ..v['macro'].. " has 'append' key but no macro by that name already exists")
+	       return false, build_error_with_context(v['context'], "Macro " ..v['macro'].. " has 'append' key but no macro by that name already exists"), warnings
 	    end
 
 	    state.macros_by_name[v['macro']]['condition'] = state.macros_by_name[v['macro']]['condition'] .. " " .. v['condition']
@@ -338,7 +470,7 @@ function load_rules_doc(rules_mgr, doc, load_state)
       elseif (v['list']) then
 
 	 if (v['list'] == nil or type(v['list']) == "table") then
-	    return false, build_error_with_context(v['context'], "List name is empty")
+	    return false, build_error_with_context(v['context'], "List name is empty"), warnings
 	 end
 
 	 if state.lists_by_name[v['list']] == nil then
@@ -347,7 +479,7 @@ function load_rules_doc(rules_mgr, doc, load_state)
 
 	 for j, field in ipairs({'items'}) do
 	    if (v[field] == nil) then
-	       return false, build_error_with_context(v['context'], "List must have property "..field)
+	       return false, build_error_with_context(v['context'], "List must have property "..field), warnings
 	    end
 	 end
 
@@ -360,7 +492,7 @@ function load_rules_doc(rules_mgr, doc, load_state)
 
 	 if append then
 	    if state.lists_by_name[v['list']] == nil then
-	       return false, build_error_with_context(v['context'], "List " ..v['list'].. " has 'append' key but no list by that name already exists")
+	       return false, build_error_with_context(v['context'], "List " ..v['list'].. " has 'append' key but no list by that name already exists"), warnings
 	    end
 
 	    for j, elem in ipairs(v['items']) do
@@ -373,7 +505,11 @@ function load_rules_doc(rules_mgr, doc, load_state)
       elseif (v['rule']) then
 
 	 if (v['rule'] == nil or type(v['rule']) == "table") then
-	    return false, build_error_with_context(v['context'], "Rule name is empty")
+	    return false, build_error_with_context(v['context'], "Rule name is empty"), warnings
+	 end
+
+	 if (v['condition'] == nil and v['exceptions'] == nil) then
+	    return false, build_error_with_context(v['context'], "Rule must have exceptions or condition property"), warnings
 	 end
 
 	 -- By default, if a rule's condition refers to an unknown
@@ -386,6 +522,13 @@ function load_rules_doc(rules_mgr, doc, load_state)
 	    v['source'] = "syscall"
 	 end
 
+	 -- Add an empty exceptions property to the rule if not
+	 -- defined, but add a warning about defining one
+	 if v['exceptions'] == nil then
+	    warnings[#warnings + 1] = "Rule "..v['rule']..": consider adding an exceptions property to define supported exceptions fields"
+	    v['exceptions'] = {}
+	 end
+
 	 -- Possibly append to the condition field of an existing rule
 	 append = false
 
@@ -393,21 +536,95 @@ function load_rules_doc(rules_mgr, doc, load_state)
 	    append = v['append']
 	 end
 
-	 if append then
+	 -- Validate the contents of the rule exception
+	 if next(v['exceptions']) ~= nil then
 
-	    -- For append rules, all you need is the condition
-	    for j, field in ipairs({'condition'}) do
-	       if (v[field] == nil) then
-		  return false, build_error_with_context(v['context'], "Rule must have property "..field)
+	    -- This validation only applies if append=false. append=true validation is handled below
+	    if append == false then
+
+	       for _, eitem in ipairs(v['exceptions']) do
+
+		  if eitem['name'] == nil then
+		     return false, build_error_with_context(v['context'], "Rule exception item must have name property"), warnings
+		  end
+
+		  if eitem['fields'] == nil then
+		     return false, build_error_with_context(v['context'], "Rule exception item "..eitem['name']..": must have fields property with a list of fields"), warnings
+		  end
+
+		  if eitem['values'] == nil then
+		     -- An empty values array is okay
+		     eitem['values'] = {}
+		  end
+
+		  -- Different handling if the fields property is a single item vs a list
+		  local valid, err
+		  if type(eitem['fields']) == "table" then
+		     valid, err = validate_exception_item_multi_fields(eitem, v['context'])
+		  else
+		     valid, err = validate_exception_item_single_field(eitem, v['context'])
+		  end
+
+		  if valid == false then
+		     return valid, err
+		  end
 	       end
 	    end
+	 end
+
+	 if append then
 
 	    if state.rules_by_name[v['rule']] == nil then
 	       if state.skipped_rules_by_name[v['rule']] == nil then
-		  return false, build_error_with_context(v['context'], "Rule " ..v['rule'].. " has 'append' key but no rule by that name already exists")
+		  return false, build_error_with_context(v['context'], "Rule " ..v['rule'].. " has 'append' key but no rule by that name already exists"), warnings
 	       end
 	    else
-	       state.rules_by_name[v['rule']]['condition'] = state.rules_by_name[v['rule']]['condition'] .. " " .. v['condition']
+
+	       if next(v['exceptions']) ~= nil then
+
+		  for _, eitem in ipairs(v['exceptions']) do
+		     local name = eitem['name']
+		     local fields = eitem['fields']
+		     local comps = eitem['comps']
+
+		     if name == nil then
+			return false, build_error_with_context(v['context'], "Rule exception item must have name property"), warnings
+		     end
+
+		     -- You can't append exception fields or comps to a rule
+		     if fields ~= nil then
+			return false, build_error_with_context(v['context'], "Can not append exception fields to existing rule, only values"), warnings
+		     end
+
+		     if comps ~= nil then
+			return false, build_error_with_context(v['context'], "Can not append exception comps to existing rule, only values"), warnings
+		     end
+
+		     -- You can append values. They are added to the
+		     -- corresponding name, if it exists. If no
+		     -- exception with that name exists, add a
+		     -- warning.
+		     if eitem['values'] ~= nil then
+			local found=false
+			for _, reitem in ipairs(state.rules_by_name[v['rule']]['exceptions']) do
+			   if reitem['name'] == eitem['name'] then
+			      found=true
+			      for _, values in ipairs(eitem['values']) do
+				 reitem['values'][#reitem['values'] + 1] = values
+			      end
+			   end
+			end
+
+			if found == false then
+			   warnings[#warnings + 1] = "Rule "..v['rule'].." with append=true: no set of fields matching name "..eitem['name']
+			end
+		     end
+		  end
+	       end
+
+	       if v['condition'] ~= nil then
+		  state.rules_by_name[v['rule']]['condition'] = state.rules_by_name[v['rule']]['condition'] .. " " .. v['condition']
+	       end
 
 	    -- Add the current object to the context of the base rule
 	       state.rules_by_name[v['rule']]['context'] = state.rules_by_name[v['rule']]['context'].."\n"..v['context']
@@ -417,7 +634,7 @@ function load_rules_doc(rules_mgr, doc, load_state)
 
 	    for j, field in ipairs({'condition', 'output', 'desc', 'priority'}) do
 	       if (v[field] == nil) then
-		  return false, build_error_with_context(v['context'], "Rule must have property "..field)
+		  return false, build_error_with_context(v['context'], "Rule must have property "..field), warnings
 	       end
 	    end
 
@@ -446,16 +663,116 @@ function load_rules_doc(rules_mgr, doc, load_state)
 	    end
 	 end
       else
-	 -- Remove the context from the table, so the table is exactly what was parsed
 	 local context = v['context']
-	 v['context'] = nil
-	 return false, build_error_with_context(context, "Unknown rule object: "..table.tostring(v))
+
+	 arr = build_error_with_context(context, "Unknown top level object: "..table.tostring(v))
+	 warnings[#warnings + 1] = arr[1]
       end
    end
 
-   return true, ""
+   return true, {}, warnings
 end
 
+-- cond and not ((proc.name=apk and fd.directory=/usr/lib/alpine) or (proc.name=npm and fd.directory=/usr/node/bin) or ...)
+-- Populates exfields with all fields used
+function build_exception_condition_string_multi_fields(eitem, exfields)
+
+   local fields = eitem['fields']
+   local comps = eitem['comps']
+
+   local icond = "("
+
+   for i, values in ipairs(eitem['values']) do
+
+      if #fields ~= #values then
+	 return nil, "Exception item "..eitem['name']..": fields and values lists must have equal length"
+      end
+
+      if icond ~= "(" then
+	 icond=icond.." or "
+      end
+
+      icond=icond.."("
+
+      for k=1,#fields do
+	 if k > 1 then
+	    icond=icond.." and "
+	 end
+	 local ival = values[k]
+	 local istr = ""
+
+	 -- If ival is a table, express it as (titem1, titem2, etc)
+	 if type(ival) == "table" then
+	    istr = "("
+	    for _, item in ipairs(ival) do
+	       if istr ~= "(" then
+		  istr = istr..", "
+	       end
+	       istr = istr..quote_item(item)
+	    end
+	    istr = istr..")"
+	 else
+	    -- If the corresponding operator is one that works on lists, possibly add surrounding parentheses.
+	    if defined_list_comp_operators[comps[k]] then
+	       istr = paren_item(ival)
+	    else
+	       -- Quote the value if not already quoted
+	       istr = quote_item(ival)
+	    end
+	 end
+
+	 icond = icond..fields[k].." "..comps[k].." "..istr
+	 exfields[fields[k]] = true
+      end
+
+      icond=icond..")"
+   end
+
+   icond = icond..")"
+
+   -- Don't return a trivially empty condition string
+   if icond == "()" then
+      icond = ""
+   end
+
+   return icond, nil
+
+end
+
+function build_exception_condition_string_single_field(eitem, exfields)
+
+   local icond = ""
+
+   for i, value in ipairs(eitem['values']) do
+
+      if type(value) ~= "string" then
+	 return "", "Expected values array for item "..eitem['name'].." to contain a list of strings"
+      end
+
+      if icond == "" then
+	 icond = "("..eitem['fields'].." "..eitem['comps'].." ("
+      else
+	 icond = icond..", "
+      end
+
+      exfields[eitem['fields']] = true
+
+      icond = icond..quote_item(value)
+   end
+
+   if icond ~= "" then
+      icond = icond.."))"
+   end
+
+   return icond, nil
+
+end
+
+-- Returns:
+-- - Load Result: bool
+-- - required engine version. will be nil when load result is false
+-- - List of Errors
+-- - List of Warnings
 function load_rules(sinsp_lua_parser,
 		    json_lua_parser,
 		    rules_content,
@@ -465,6 +782,8 @@ function load_rules(sinsp_lua_parser,
 		    extra,
 		    replace_container_info,
 		    min_priority)
+
+   local warnings = {}
 
    local load_state = {lines={}, indices={}, cur_item_idx=0, min_priority=min_priority, required_engine_version=0}
 
@@ -487,36 +806,42 @@ function load_rules(sinsp_lua_parser,
       row = tonumber(row)
       col = tonumber(col)
 
-      return false, build_error(load_state.lines, row, 3, docs)
+      return false, nil, build_error(load_state.lines, row, 3, docs), warnings
    end
 
    if docs == nil then
       -- An empty rules file is acceptable
-      return true, load_state.required_engine_version
+      return true, load_state.required_engine_version, {}, warnings
    end
 
    if type(docs) ~= "table" then
-      return false, build_error(load_state.lines, 1, 1, "Rules content is not yaml")
+      return false, nil, build_error(load_state.lines, 1, 1, "Rules content is not yaml"), warnings
    end
 
    for docidx, doc in ipairs(docs) do
 
       if type(doc) ~= "table" then
-	 return false, build_error(load_state.lines, 1, 1, "Rules content is not yaml")
+	 return false, nil, build_error(load_state.lines, 1, 1, "Rules content is not yaml"), warnings
       end
 
       -- Look for non-numeric indices--implies that document is not array
       -- of objects.
       for key, val in pairs(doc) do
 	 if type(key) ~= "number" then
-	    return false, build_error(load_state.lines, 1, 1, "Rules content is not yaml array of objects")
+	    return false, nil, build_error(load_state.lines, 1, 1, "Rules content is not yaml array of objects"), warnings
 	 end
       end
 
-      res, errstr = load_rules_doc(rules_mgr, doc, load_state)
+      res, errors, doc_warnings = load_rules_doc(rules_mgr, doc, load_state)
+
+      if (doc_warnings ~= nil) then
+	 for idx, warning in pairs(doc_warnings) do
+	    table.insert(warnings, warning)
+	 end
+      end
 
       if not res then
-	 return res, errstr
+	 return res, nil, errors, warnings
       end
    end
 
@@ -538,8 +863,9 @@ function load_rules(sinsp_lua_parser,
       -- the items and expand any references to the items in the list
       for i, item in ipairs(v['items']) do
 	 if (state.lists[item] == nil) then
-	    items[#items+1] = item
+	    items[#items+1] = quote_item(item)
 	 else
+	    state.lists[item].used = true
 	    for i, exp_item in ipairs(state.lists[item].items) do
 	       items[#items+1] = exp_item
 	    end
@@ -556,7 +882,7 @@ function load_rules(sinsp_lua_parser,
       local status, ast = compiler.compile_macro(v['condition'], state.macros, state.lists)
 
       if status == false then
-	 return false, build_error_with_context(v['context'], ast)
+	 return false, nil, build_error_with_context(v['context'], ast), warnings
       end
 
       if v['source'] == "syscall" then
@@ -572,16 +898,48 @@ function load_rules(sinsp_lua_parser,
 
       local v = state.rules_by_name[name]
 
+      local econd = ""
+
+      local exfields = {}
+
+      -- Turn exceptions into condition strings and add them to each
+      -- rule's condition
+      for _, eitem in ipairs(v['exceptions']) do
+
+	 local icond, err
+	 if type(eitem['fields']) == "table" then
+	    icond, err = build_exception_condition_string_multi_fields(eitem, exfields)
+	 else
+	    icond, err = build_exception_condition_string_single_field(eitem, exfields)
+	 end
+
+	 if err ~= nil then
+	    return false, nil, build_error_with_context(v['context'], err), warnings
+	 end
+
+	 if icond ~= "" then
+	    econd = econd.." and not "..icond
+	 end
+      end
+
+      state.rules_by_name[name]['exception_fields'] = exfields
+
+      if econd ~= "" then
+	 state.rules_by_name[name]['compile_condition'] = "("..state.rules_by_name[name]['condition']..") "..econd
+      else
+	 state.rules_by_name[name]['compile_condition'] = state.rules_by_name[name]['condition']
+      end
+
       warn_evttypes = true
       if v['warn_evttypes'] ~= nil then
 	 warn_evttypes = v['warn_evttypes']
       end
 
-      local status, filter_ast, filters = compiler.compile_filter(v['rule'], v['condition'],
+      local status, filter_ast, filters = compiler.compile_filter(v['rule'], v['compile_condition'],
 								  state.macros, state.lists)
 
       if status == false then
-	 return false, build_error_with_context(v['context'], filter_ast)
+	 return false, nil, build_error_with_context(v['context'], filter_ast), warnings
       end
 
       local evtttypes = {}
@@ -592,52 +950,22 @@ function load_rules(sinsp_lua_parser,
 	    sinsp_rule_utils.check_for_ignored_syscalls_events(filter_ast, 'rule', v['rule'])
 	 end
 
-	 evttypes, syscallnums = sinsp_rule_utils.get_evttypes_syscalls(name, filter_ast, v['condition'], warn_evttypes, verbose)
+	 evttypes, syscallnums = sinsp_rule_utils.get_evttypes_syscalls(name, filter_ast, v['compile_condition'], warn_evttypes, verbose)
       end
 
       -- If a filter in the rule doesn't exist, either skip the rule
       -- or raise an error, depending on the value of
       -- skip-if-unknown-filter.
       for filter, _ in pairs(filters) do
-	 found = false
+	 if not is_defined_filter(filter) then
+	    msg = "rule \""..v['rule'].."\": contains unknown filter "..filter
+	    warnings[#warnings + 1] = msg
 
-	 if defined_noarg_filters[filter] ~= nil then
-	    found = true
-	 else
-	    bracket_idx = string.find(filter, "[", 1, true)
-
-	    if bracket_idx ~= nil then
-	       subfilter = string.sub(filter, 1, bracket_idx-1)
-
-	       if defined_arg_filters[subfilter] ~= nil then
-		  found = true
-	       end
-	    end
-
-	    if not found then
-	       dot_idx = string.find(filter, ".", 1, true)
-
-	       while dot_idx ~= nil do
-		  subfilter = string.sub(filter, 1, dot_idx-1)
-
-		  if defined_arg_filters[subfilter] ~= nil then
-		     found = true
-		     break
-		  end
-
-		  dot_idx = string.find(filter, ".", dot_idx+1, true)
-	       end
-	    end
-	 end
-
-	 if not found then
-	    if v['skip-if-unknown-filter'] then
-	       if verbose then
-		  print("Skipping rule \""..v['rule'].."\" that contains unknown filter "..filter)
-	       end
-	       goto next_rule
+	    if not v['skip-if-unknown-filter'] then
+	       return false, nil, build_error_with_context(v['context'], msg), warnings
 	    else
-	       error("Rule \""..v['rule'].."\" contains unknown filter "..filter)
+	       print("Skipping "..msg)
+	       goto next_rule
 	    end
 	 end
       end
@@ -716,33 +1044,37 @@ function load_rules(sinsp_lua_parser,
 	 -- Ensure that the output field is properly formatted by
 	 -- creating a formatter from it. Any error will be thrown
 	 -- up to the top level.
-	 formatter = formats.formatter(v['source'], v['output'])
-	 formats.free_formatter(v['source'], formatter)
+	 local err, formatter = formats.formatter(v['source'], v['output'])
+	 if err == nil then
+	    formats.free_formatter(v['source'], formatter)
+	 else
+	    return false, nil, build_error_with_context(v['context'], err), warnings
+	 end
       else
-	 return false, build_error_with_context(v['context'], "Unexpected type in load_rule: "..filter_ast.type)
+	 return false, nil, build_error_with_context(v['context'], "Unexpected type in load_rule: "..filter_ast.type), warnings
       end
 
       ::next_rule::
    end
 
-   if verbose then
-      -- Print info on any dangling lists or macros that were not used anywhere
-      for name, macro in pairs(state.macros) do
-	 if macro.used == false then
-	    print("Warning: macro "..name.." not refered to by any rule/macro")
-	 end
+   -- Print info on any dangling lists or macros that were not used anywhere
+   for name, macro in pairs(state.macros) do
+      if macro.used == false then
+	 msg = "macro "..name.." not refered to by any rule/macro"
+	 warnings[#warnings + 1] = msg
       end
+   end
 
-      for name, list in pairs(state.lists) do
-	 if list.used == false then
-	    print("Warning: list "..name.." not refered to by any rule/macro/list")
-	 end
+   for name, list in pairs(state.lists) do
+      if list.used == false then
+	 msg = "list "..name.." not refered to by any rule/macro/list"
+	 warnings[#warnings + 1] = msg
       end
    end
 
    io.flush()
 
-   return true, load_state.required_engine_version
+   return true, load_state.required_engine_version, {}, warnings
 end
 
 local rule_fmt = "%-50s %s"
@@ -819,7 +1151,14 @@ function on_event(rule_id)
    -- Prefix output with '*' so formatting is permissive
    output = "*"..rule.output
 
-   return rule.rule, rule.priority_num, output
+   -- Also return all fields from all exceptions
+   combined_rule = state.rules_by_name[rule.rule]
+
+   if combined_rule == nil then
+      error ("rule_loader.on_event(): could not find rule by name: ", rule.rule)
+   end
+
+   return rule.rule, rule.priority_num, output, combined_rule.exception_fields
 end
 
 function print_stats()
