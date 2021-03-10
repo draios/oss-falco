@@ -1,0 +1,56 @@
+pipeline {
+	agent { label 'agent-builder-parallel' }
+	options {
+		timeout(time: 60, unit: 'MINUTES')
+	}
+	parameters {
+	        string(name: 'OSS_FALCO_BRANCH', defaultValue: "master")
+		string(name: 'S3_ROOT_URL', defaultValue: "s3://download.draios.com/")
+	}
+	stages {
+		stage('Check out dependencies') {
+			steps {
+				dir('falco') {
+					checkout([$class: 'GitSCM', branches: [[name: "${params.OSS_FALCO_BRANCH}"]], extensions: scm.extensions + [[$class: 'LocalBranch']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[credentialsId: '4399087a-3e99-41e5-9dbe-a70a554672c8', url: 'git@github.com:draios/oss-falco.git']]])
+		                }
+			}
+	}
+	stage('CMake oss-falco') {
+	    steps {
+		dir('build') {
+		    sh label: '', script: '''
+                    docker run --user $(id -u):$(id -g) -v /etc/passwd:/etc/passwd:ro -v $PWD/..:/source -v $PWD:/build falcosecurity/falco-builder cmake
+                    '''
+		}
+	    }
+	}
+	stage('Build oss-falco') {
+	    steps {
+		dir('build') {
+		    sh label: '', script: '''
+                    docker run --user $(id -u):$(id -g) -v /etc/passwd:/etc/passwd:ro -v $PWD/..:/source -v $PWD:/build falcosecurity/falco-builder package
+                    '''
+		}
+	    }
+	}
+	stage('Copy RPM to s3') {
+	    steps {
+		dir('build') {
+		    sh label: '', script: '''
+                    export AWS_DEFAULT_REGION="us-east-1"
+                    S3_ROOT_URL=$(echo $S3_ROOT_URL | sed 's:/*$::')
+                    CUR_VERSION=$(ls release/falco-*.rpm | cut -d'-' -f2-3)
+                    echo ${CUR_VERSION} > cur_version.txt
+                    aws s3 cp --acl=public-read release/falco-*.rpm ${S3_ROOT_URL}/falco-onprem-builds/
+                    aws s3 cp --acl=public-read cur_version.txt ${S3_ROOT_URL}/falco-onprem-builds/
+                    '''
+		}
+	    }
+	}		
+    }
+    post {
+    		always {
+    			cleanWs()
+    		}
+    }
+}
