@@ -39,7 +39,7 @@ pipeline {
 		    sh label: '', script: '''
                     export AWS_DEFAULT_REGION="us-east-1"
                     S3_ROOT_URL=$(echo $S3_ROOT_URL | sed 's:/*$::')
-                    CUR_VERSION=$(ls release/falco-*.rpm | cut -d'-' -f2-3)
+                    CUR_VERSION=$(ls release/falco-*.rpm | egrep -o 'falco-(.*)-x86_64.rpm' | sed -e 's/falco-//g' | sed -e 's/-x86_64.rpm//g')
                     echo ${CUR_VERSION} > cur_version.txt
                     aws s3 cp --acl=public-read release/falco-*.rpm ${S3_ROOT_URL}/falco-onprem-builds/
                     aws s3 cp --acl=public-read cur_version.txt ${S3_ROOT_URL}/falco-onprem-builds/
