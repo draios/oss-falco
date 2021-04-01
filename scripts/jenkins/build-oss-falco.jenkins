@@ -1,5 +1,5 @@
 pipeline {
-	agent { label 'agent-builder-parallel' }
+	agent { label 'builder-backend-j8' }
 	options {
 		timeout(time: 60, unit: 'MINUTES')
 	}
