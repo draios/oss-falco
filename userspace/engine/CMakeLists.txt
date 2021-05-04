@@ -37,6 +37,7 @@ if(MINIMAL_BUILD)
       "${STRING_VIEW_LITE_INCLUDE}"
       "${SYSDIG_SOURCE_DIR}/userspace/libsinsp/third-party/jsoncpp"
       "${SYSDIG_SOURCE_DIR}/userspace/libscap"
+      "${SYSDIG_SOURCE_DIR}/userspace/chisel"
       "${SYSDIG_SOURCE_DIR}/userspace/libsinsp"
       "${PROJECT_BINARY_DIR}/userspace/engine")
 else()
@@ -51,6 +52,7 @@ else()
       "${SYSDIG_SOURCE_DIR}/userspace/libsinsp/third-party/jsoncpp"
       "${SYSDIG_SOURCE_DIR}/userspace/libscap"
       "${SYSDIG_SOURCE_DIR}/userspace/libsinsp"
+      "${SYSDIG_SOURCE_DIR}/userspace/chisel"
       "${PROJECT_BINARY_DIR}/userspace/engine")
 endif()
 
