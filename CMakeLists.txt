@@ -66,10 +66,17 @@ if(MINIMAL_BUILD)
 endif()
 
 if(MUSL_OPTIMIZED_BUILD)
-  set(MUSL_FLAGS "-static -Os")
+  set(MUSL_FLAGS "-static -Os -fPIE -pie")
 endif()
 
-set(CMAKE_COMMON_FLAGS "-Wall -ggdb ${DRAIOS_FEATURE_FLAGS} ${MINIMAL_BUILD_FLAGS} ${MUSL_FLAGS}")
+# explicitly set hardening flags
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(FALCO_SECURITY_FLAGS "-Wl,-z,relro,-z,now -fstack-protector-strong")
+if(CMAKE_BUILD_TYPE STREQUAL "release")
+  set(FALCO_SECURITY_FLAGS "${FALCO_SECURITY_FLAGS} -D_FORTIFY_SOURCE=2")
+endif()
+
+set(CMAKE_COMMON_FLAGS "${FALCO_SECURITY_FLAGS} -Wall -ggdb ${DRAIOS_FEATURE_FLAGS} ${MINIMAL_BUILD_FLAGS} ${MUSL_FLAGS}")
 
 if(BUILD_WARNINGS_AS_ERRORS)
   set(CMAKE_SUPPRESSED_WARNINGS
@@ -103,6 +110,12 @@ set(CMD_MAKE make)
 
 include(ExternalProject)
 
+# LuaJIT
+include(luajit)
+
+# libs
+include(falcosecurity-libs)
+
 # jq
 include(jq)
 
@@ -118,12 +131,6 @@ ExternalProject_Add(
   BUILD_COMMAND ""
   INSTALL_COMMAND "")
 
-# curses
-# We pull this in because libsinsp won't build without it
-set(CURSES_NEED_NCURSES TRUE)
-find_package(Curses REQUIRED)
-message(STATUS "Found ncurses: include: ${CURSES_INCLUDE_DIR}, lib: ${CURSES_LIBRARIES}")
-
 # b64
 include(b64)
 
@@ -132,14 +139,11 @@ include(yaml-cpp)
 
 if(NOT MINIMAL_BUILD)
   # OpenSSL
-  include(OpenSSL)
+  include(openssl)
 
   # libcurl
-  include(cURL)
+  include(curl)
 endif()
-
-# LuaJIT
-include(luajit)
 
 # Lpeg
 include(lpeg)
@@ -151,21 +155,7 @@ include(libyaml)
 include(lyaml)
 
 # One TBB
-set(TBB_SRC "${PROJECT_BINARY_DIR}/tbb-prefix/src/tbb")
-
-message(STATUS "Using bundled tbb in '${TBB_SRC}'")
-
-set(TBB_INCLUDE_DIR "${TBB_SRC}/include/")
-set(TBB_LIB "${TBB_SRC}/build/lib_release/libtbb.a")
-ExternalProject_Add(
-  tbb
-  URL "https://github.com/oneapi-src/oneTBB/archive/2018_U5.tar.gz"
-  URL_HASH "SHA256=b8dbab5aea2b70cf07844f86fa413e549e099aa3205b6a04059ca92ead93a372"
-  CONFIGURE_COMMAND ""
-  BUILD_COMMAND ${CMD_MAKE} tbb_build_dir=${TBB_SRC}/build tbb_build_prefix=lib extra_inc=big_iron.inc
-  BUILD_IN_SOURCE 1
-  BUILD_BYPRODUCTS ${TBB_LIB}
-  INSTALL_COMMAND "")
+include(tbb)
 
 if(NOT MINIMAL_BUILD)
   # civetweb
@@ -189,12 +179,12 @@ endif()
 include(DownloadStringViewLite)
 
 if(NOT MINIMAL_BUILD)
+  include(zlib)
+  include(cares)
+  include(protobuf)
   # gRPC
-  include(gRPC)
+  include(grpc)
 endif()
-
-# sysdig
-include(sysdig)
 
 # Installation
 install(FILES falco.yaml DESTINATION "${FALCO_ETC_DIR}")

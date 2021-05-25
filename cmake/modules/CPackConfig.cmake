@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2020 The Falco Authors.
+# Copyright (C) 2021 The Falco Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
 # the License. You may obtain a copy of the License at
@@ -46,8 +46,9 @@ set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
 )
 
 set(CPACK_RPM_PACKAGE_LICENSE "Apache v2.0")
+set(CPACK_RPM_PACKAGE_ARCHITECTURE, "amd64")
 set(CPACK_RPM_PACKAGE_URL "https://www.falco.org")
-set(CPACK_RPM_PACKAGE_REQUIRES "dkms, kernel-devel, ncurses")
+set(CPACK_RPM_PACKAGE_REQUIRES "dkms, kernel-devel, systemd")
 set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE "${CMAKE_BINARY_DIR}/scripts/rpm/postinstall")
 set(CPACK_RPM_PRE_UNINSTALL_SCRIPT_FILE "${CMAKE_BINARY_DIR}/scripts/rpm/preuninstall")
 set(CPACK_RPM_POST_UNINSTALL_SCRIPT_FILE "${CMAKE_BINARY_DIR}/scripts/rpm/postuninstall")
@@ -59,9 +60,7 @@ set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION
     /etc
     /usr
     /usr/bin
-    /usr/share
-    /etc/rc.d
-    /etc/rc.d/init.d)
+    /usr/share)
 set(CPACK_RPM_PACKAGE_RELOCATABLE "OFF")
 
 include(CPack)

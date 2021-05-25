@@ -368,59 +368,49 @@ jobs:
           root: /
           paths:
             - build/release/*.rpm
-  # Publish the packages
+  # Publish the dev packages
   "publish/packages-dev":
     docker:
-      - image: docker.bintray.io/jfrog/jfrog-cli-go:latest
+      - image: docker.io/centos:7
     steps:
       - attach_workspace:
           at: /
       - run:
-          name: Create versions
+          name: Setup
           command: |
-            FALCO_VERSION=$(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3 | sed -e 's/^"//' -e 's/"$//')
-            jfrog bt vs falcosecurity/deb-dev/falco/${FALCO_VERSION} --user poiana --key ${BINTRAY_SECRET} || jfrog bt vc falcosecurity/deb-dev/falco/${FALCO_VERSION} --desc="Falco (master)" --github-rel-notes=CHANGELOG.md --released=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z") --vcs-tag=${CIRCLE_SHA1} --user poiana --key ${BINTRAY_SECRET}
-            jfrog bt vs falcosecurity/rpm-dev/falco/${FALCO_VERSION} --user poiana --key ${BINTRAY_SECRET} || jfrog bt vc falcosecurity/rpm-dev/falco/${FALCO_VERSION} --desc="Falco (master)" --github-rel-notes=CHANGELOG.md --released=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z") --vcs-tag=${CIRCLE_SHA1} --user poiana --key ${BINTRAY_SECRET}
-            jfrog bt vs falcosecurity/bin-dev/falco/${FALCO_VERSION} --user poiana --key ${BINTRAY_SECRET} || jfrog bt vc falcosecurity/bin-dev/falco/${FALCO_VERSION} --desc="Falco (master)" --github-rel-notes=CHANGELOG.md --released=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z") --vcs-tag=${CIRCLE_SHA1} --user poiana --key ${BINTRAY_SECRET}
-      - run:
-          name: Publish deb-dev
-          command: |
-            FALCO_VERSION=$(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3 | sed -e 's/^"//' -e 's/"$//')
-            jfrog bt u /build/release/falco-${FALCO_VERSION}-x86_64.deb falcosecurity/deb-dev/falco/${FALCO_VERSION} stable/ --deb stable/main/amd64 --user poiana --key ${BINTRAY_SECRET} --publish --override
+            yum install epel-release -y
+            yum update -y
+            yum install createrepo gpg python python-pip -y
+            pip install awscli==1.19.47
+            echo $GPG_KEY | base64 -d | gpg --import
       - run:
           name: Publish rpm-dev
           command: |
             FALCO_VERSION=$(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3 | sed -e 's/^"//' -e 's/"$//')
-            jfrog bt u /build/release/falco-${FALCO_VERSION}-x86_64.rpm falcosecurity/rpm-dev/falco/${FALCO_VERSION} --user poiana --key ${BINTRAY_SECRET} --publish --override
+            /source/falco/scripts/publish-rpm -f /build/release/falco-${FALCO_VERSION}-x86_64.rpm -r rpm-dev
       - run:
           name: Publish bin-dev
           command: |
             FALCO_VERSION=$(cat /build-static/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3 | sed -e 's/^"//' -e 's/"$//')
-            jfrog bt u /build-static/release/falco-${FALCO_VERSION}-x86_64.tar.gz falcosecurity/bin-dev/falco/${FALCO_VERSION} x86_64/ --user poiana --key ${BINTRAY_SECRET} --publish --override
-  # Clenup the Falco development release packages
-  "cleanup/packages-dev":
+            /source/falco/scripts/publish-bin -f /build-static/release/falco-${FALCO_VERSION}-x86_64.tar.gz -r bin-dev -a x86_64
+  "publish/packages-deb-dev":
     docker:
-      - image: docker.bintray.io/jfrog/jfrog-cli-go:latest
+      - image: docker.io/debian:stable
     steps:
-      - checkout:
-          path: /source/falco
+      - attach_workspace:
+          at: /
       - run:
-          name: Prepare env
+          name: Setup
           command: |
-            apk add --no-cache --update
-            apk add curl jq
+            apt update -y
+            apt-get install apt-utils bzip2 gpg python python-pip -y
+            pip install awscli
+            echo $GPG_KEY | base64 -d | gpg --import
       - run:
-          name: Only keep the 10 most recent Falco development release tarballs
+          name: Publish deb-dev
           command: |
-            /source/falco/scripts/cleanup -p ${BINTRAY_SECRET} -r bin-dev
-      - run:
-          name: Only keep the 50 most recent Falco development release RPMs
-          command: |
-            /source/falco/scripts/cleanup -p ${BINTRAY_SECRET} -r rpm-dev
-      - run:
-          name: Only keep the 50 most recent Falco development release DEBs
-          command: |
-            /source/falco/scripts/cleanup -p ${BINTRAY_SECRET} -r deb-dev
+            FALCO_VERSION=$(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3 | sed -e 's/^"//' -e 's/"$//')
+            /source/falco/scripts/publish-deb -f /build/release/falco-${FALCO_VERSION}-x86_64.deb -r deb-dev
   # Publish docker packages
   "publish/docker-dev":
     docker:
@@ -462,7 +452,19 @@ jobs:
       - checkout
       - setup_remote_docker
       - run:
-          name: Build and publish falco to AWS
+          name: Build and publish no-driver (dev) to AWS
+          command: |
+            apk update
+            apk add --update groff less py-pip
+            pip install awscli
+            FALCO_VERSION=$(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3 | sed -e 's/^"//' -e 's/"$//')
+            docker build --build-arg VERSION_BUCKET=bin-dev --build-arg FALCO_VERSION=${FALCO_VERSION} -t "public.ecr.aws/falcosecurity/falco-no-driver:master" docker/no-driver
+            docker tag public.ecr.aws/falcosecurity/falco-no-driver:master public.ecr.aws/falcosecurity/falco:master-slim
+            aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws/falcosecurity
+            docker push "public.ecr.aws/falcosecurity/falco-no-driver:master"
+            docker push "public.ecr.aws/falcosecurity/falco:master-slim"
+      - run:
+          name: Build and publish falco (dev) to AWS
           command: |
             apk update
             apk add --update groff less py-pip
@@ -471,35 +473,58 @@ jobs:
             docker build --build-arg VERSION_BUCKET=deb-dev --build-arg FALCO_VERSION=${FALCO_VERSION} -t "public.ecr.aws/falcosecurity/falco:master" docker/falco
             aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws/falcosecurity
             docker push "public.ecr.aws/falcosecurity/falco:master"
+      - run:
+          name: Build and publish driver-loader (dev) to AWS
+          command: |
+            apk update
+            apk add --update groff less py-pip
+            pip install awscli
+            docker build --build-arg FALCO_IMAGE_TAG=master -t "public.ecr.aws/falcosecurity/falco-driver-loader:master" docker/driver-loader
+            aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws/falcosecurity
+            docker push "public.ecr.aws/falcosecurity/falco-driver-loader:master"
   # Publish the packages
   "publish/packages":
     docker:
-      - image: docker.bintray.io/jfrog/jfrog-cli-go:latest
+      - image: docker.io/centos:7
     steps:
       - attach_workspace:
           at: /
       - run:
-          name: Create versions
+          name: Setup
           command: |
-            FALCO_VERSION=$(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3 | sed -e 's/^"//' -e 's/"$//')
-            jfrog bt vs falcosecurity/deb/falco/${FALCO_VERSION} --user poiana --key ${BINTRAY_SECRET} || jfrog bt vc falcosecurity/deb/falco/${FALCO_VERSION} --desc="Falco (${CIRCLE_TAG})" --released=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z") --vcs-tag=${CIRCLE_TAG} --user poiana --key ${BINTRAY_SECRET}
-            jfrog bt vs falcosecurity/rpm/falco/${FALCO_VERSION} --user poiana --key ${BINTRAY_SECRET} || jfrog bt vc falcosecurity/rpm/falco/${FALCO_VERSION} --desc="Falco (${CIRCLE_TAG})" --released=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z") --vcs-tag=${CIRCLE_TAG} --user poiana --key ${BINTRAY_SECRET}
-            jfrog bt vs falcosecurity/bin/falco/${FALCO_VERSION} --user poiana --key ${BINTRAY_SECRET} || jfrog bt vc falcosecurity/bin/falco/${FALCO_VERSION} --desc="Falco (${CIRCLE_TAG})" --released=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z") --vcs-tag=${CIRCLE_TAG} --user poiana --key ${BINTRAY_SECRET}
-      - run:
-          name: Publish deb
-          command: |
-            FALCO_VERSION=$(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3 | sed -e 's/^"//' -e 's/"$//')
-            jfrog bt u /build/release/falco-${FALCO_VERSION}-x86_64.deb falcosecurity/deb/falco/${FALCO_VERSION} stable/ --deb stable/main/amd64 --user poiana --key ${BINTRAY_SECRET} --publish --override
+            yum install epel-release -y
+            yum update -y
+            yum install createrepo gpg python python-pip -y
+            pip install awscli==1.19.47
+            echo $GPG_KEY | base64 -d | gpg --import
       - run:
           name: Publish rpm
           command: |
             FALCO_VERSION=$(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3 | sed -e 's/^"//' -e 's/"$//')
-            jfrog bt u /build/release/falco-${FALCO_VERSION}-x86_64.rpm falcosecurity/rpm/falco/${FALCO_VERSION} --user poiana --key ${BINTRAY_SECRET} --publish --override
+            /source/falco/scripts/publish-rpm -f /build/release/falco-${FALCO_VERSION}-x86_64.rpm -r rpm
       - run:
           name: Publish bin
           command: |
             FALCO_VERSION=$(cat /build-static/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3 | sed -e 's/^"//' -e 's/"$//')
-            jfrog bt u /build-static/release/falco-${FALCO_VERSION}-x86_64.tar.gz falcosecurity/bin/falco/${FALCO_VERSION} x86_64/ --user poiana --key ${BINTRAY_SECRET} --publish --override
+            /source/falco/scripts/publish-bin -f /build-static/release/falco-${FALCO_VERSION}-x86_64.tar.gz -r bin -a x86_64
+  "publish/packages-deb":
+    docker:
+      - image: docker.io/debian:stable
+    steps:
+      - attach_workspace:
+          at: /
+      - run:
+          name: Setup
+          command: |
+            apt update -y
+            apt-get install apt-utils bzip2 gpg python python-pip -y
+            pip install awscli
+            echo $GPG_KEY | base64 -d | gpg --import
+      - run:
+          name: Publish deb
+          command: |
+            FALCO_VERSION=$(cat /build/release/userspace/falco/config_falco.h | grep 'FALCO_VERSION ' | cut -d' ' -f3 | sed -e 's/^"//' -e 's/"$//')
+            /source/falco/scripts/publish-deb -f /build/release/falco-${FALCO_VERSION}-x86_64.deb -r deb
   # Publish docker packages
   "publish/docker":
     docker:
@@ -547,6 +572,21 @@ jobs:
       - checkout
       - setup_remote_docker
       - run:
+          name: Build and publish no-driver to AWS
+          command: |
+            apk update
+            apk add --update groff less py-pip
+            pip install awscli
+            docker build --build-arg VERSION_BUCKET=bin --build-arg FALCO_VERSION=${CIRCLE_TAG} -t "public.ecr.aws/falcosecurity/falco-no-driver:${CIRCLE_TAG}" docker/no-driver
+            docker tag "public.ecr.aws/falcosecurity/falco-no-driver:${CIRCLE_TAG}" public.ecr.aws/falcosecurity/falco-no-driver:latest
+            docker tag "public.ecr.aws/falcosecurity/falco-no-driver:${CIRCLE_TAG}" "public.ecr.aws/falcosecurity/falco:${CIRCLE_TAG}-slim"
+            docker tag "public.ecr.aws/falcosecurity/falco-no-driver:${CIRCLE_TAG}" "public.ecr.aws/falcosecurity/falco:latest-slim"
+            aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws/falcosecurity
+            docker push "public.ecr.aws/falcosecurity/falco:${CIRCLE_TAG}-slim"
+            docker push "public.ecr.aws/falcosecurity/falco:latest-slim"
+            docker push "public.ecr.aws/falcosecurity/falco-no-driver:${CIRCLE_TAG}"
+            docker push "public.ecr.aws/falcosecurity/falco-no-driver:latest"
+      - run:
           name: Build and publish falco to AWS
           command: |
             apk update
@@ -557,6 +597,17 @@ jobs:
             aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws/falcosecurity
             docker push "public.ecr.aws/falcosecurity/falco:${CIRCLE_TAG}"
             docker push "public.ecr.aws/falcosecurity/falco:latest"
+      - run:
+          name: Build and publish falco-driver-loader to AWS
+          command: |
+            apk update
+            apk add --update groff less py-pip
+            pip install awscli
+            docker build --build-arg FALCO_IMAGE_TAG=${CIRCLE_TAG} -t "public.ecr.aws/falcosecurity/falco-driver-loader:${CIRCLE_TAG}" docker/driver-loader
+            docker tag "public.ecr.aws/falcosecurity/falco-driver-loader:${CIRCLE_TAG}" public.ecr.aws/falcosecurity/falco-driver-loader:latest
+            aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws/falcosecurity
+            docker push "public.ecr.aws/falcosecurity/falco-driver-loader:${CIRCLE_TAG}"
+            docker push "public.ecr.aws/falcosecurity/falco-driver-loader:latest"
 workflows:
   version: 2
   build_and_test:
@@ -588,7 +639,9 @@ workflows:
           requires:
             - "tests/integration"
       - "publish/packages-dev":
-          context: falco
+          context:
+            - falco
+            - test-infra
           filters:
             tags:
               ignore: /.*/
@@ -597,15 +650,17 @@ workflows:
           requires:
             - "rpm/sign"
             - "tests/integration-static"
-      - "cleanup/packages-dev":
-          context: falco
+      - "publish/packages-deb-dev":
+          context:
+            - falco
+            - test-infra
           filters:
             tags:
               ignore: /.*/
             branches:
               only: master
           requires:
-            - "publish/packages-dev"
+            - "tests/integration"
       - "publish/docker-dev":
           context: falco
           filters:
@@ -615,6 +670,7 @@ workflows:
               only: master
           requires:
             - "publish/packages-dev"
+            - "publish/packages-deb-dev"
             - "tests/driver-loader/integration"
       - "publish/container-images-aws-dev":
           context: test-infra # contains Falco AWS credentials
@@ -650,7 +706,9 @@ workflows:
             branches:
               ignore: /.*/
       - "publish/packages":
-          context: falco
+          context:
+            - falco
+            - test-infra
           requires:
             - "build/musl"
             - "rpm/sign"
@@ -659,10 +717,24 @@ workflows:
               only: /.*/
             branches:
               ignore: /.*/
+      - "publish/packages-deb":
+          context:
+            - falco
+            - test-infra
+          requires:
+            - "build/centos7"
+          filters:
+            tags:
+              only: /.*/
+            branches:
+              ignore: /.*/
       - "publish/docker":
-          context: falco
+          context:
+            - falco
+            - test-infra
           requires:
             - "publish/packages"
+            - "publish/packages-deb"
           filters:
             tags:
               only: /.*/

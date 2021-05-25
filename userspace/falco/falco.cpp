@@ -23,6 +23,7 @@ limitations under the License.
 #include <vector>
 #include <algorithm>
 #include <string>
+#include <chrono>
 #include <functional>
 #include <signal.h>
 #include <fcntl.h>
@@ -35,8 +36,8 @@ limitations under the License.
 
 #include "logger.h"
 #include "utils.h"
-#include "chisel.h"
 #include "fields_info.h"
+#include "falco_utils.h"
 
 #include "event_drops.h"
 #include "configuration.h"
@@ -252,10 +253,12 @@ uint64_t do_inspect(falco_engine *engine,
 	sinsp_evt* ev;
 	StatsFileWriter writer;
 	uint64_t duration_start = 0;
+	uint32_t timeouts_since_last_success_or_msg = 0;
 
 	sdropmgr.init(inspector,
 		      outputs,
 		      config.m_syscall_evt_drop_actions,
+		      config.m_syscall_evt_drop_threshold,
 		      config.m_syscall_evt_drop_rate,
 		      config.m_syscall_evt_drop_max_burst,
 		      config.m_syscall_evt_simulate_drops);
@@ -298,6 +301,28 @@ uint64_t do_inspect(falco_engine *engine,
 		}
 		else if(rc == SCAP_TIMEOUT)
 		{
+			if(unlikely(ev == nullptr))
+			{
+				timeouts_since_last_success_or_msg++;
+				if(timeouts_since_last_success_or_msg > config.m_syscall_evt_timeout_max_consecutives)
+				{
+					std::string rule = "Falco internal: timeouts notification";
+					std::string msg = rule + ". " + std::to_string(config.m_syscall_evt_timeout_max_consecutives) + " consecutive timeouts without event.";
+					std::string last_event_time_str = "none";
+					if(duration_start > 0)
+					{
+						sinsp_utils::ts_to_string(duration_start, &last_event_time_str, false, true);
+					}
+					std::map<std::string, std::string> o = {
+						{"last_event_time", last_event_time_str},
+					};
+					auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+					outputs->handle_msg(now, falco_common::PRIORITY_DEBUG, msg, rule, o);
+					// Reset the timeouts counter, Falco alerted
+					timeouts_since_last_success_or_msg = 0;
+				}
+			}
+
 			continue;
 		}
 		else if(rc == SCAP_EOF)
@@ -308,16 +333,18 @@ uint64_t do_inspect(falco_engine *engine,
 		{
 			//
 			// Event read error.
-			// Notify the chisels that we're exiting, and then die with an error.
 			//
 			cerr << "rc = " << rc << endl;
 			throw sinsp_exception(inspector->getlasterr().c_str());
 		}
 
-		if (duration_start == 0)
+		// Reset the timeouts counter, Falco succesfully got an event to process
+		timeouts_since_last_success_or_msg = 0;
+		if(duration_start == 0)
 		{
 			duration_start = ev->get_ts();
-		} else if(duration_to_tot_ns > 0)
+		}
+		else if(duration_to_tot_ns > 0)
 		{
 			if(ev->get_ts() - duration_start >= duration_to_tot_ns)
 			{

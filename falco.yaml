@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2019 The Falco Authors.
+# Copyright (C) 2021 The Falco Authors.
 #
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -68,24 +68,52 @@ priority: debug
 buffered_outputs: false
 
 # Falco uses a shared buffer between the kernel and userspace to pass
-# system call information. When falco detects that this buffer is
+# system call information. When Falco detects that this buffer is
 # full and system calls have been dropped, it can take one or more of
 # the following actions:
-#   - "ignore": do nothing. If an empty list is provided, ignore is assumed.
-#   - "log": log a CRITICAL message noting that the buffer was full.
-#   - "alert": emit a falco alert noting that the buffer was full.
-#   - "exit": exit falco with a non-zero rc.
+#   - ignore: do nothing (default when list of actions is empty)
+#   - log: log a DEBUG message noting that the buffer was full
+#   - alert: emit a Falco alert noting that the buffer was full
+#   - exit: exit Falco with a non-zero rc
+#
+# Notice it is not possible to ignore and log/alert messages at the same time.
 #
 # The rate at which log/alert messages are emitted is governed by a
 # token bucket. The rate corresponds to one message every 30 seconds
-# with a burst of 10 messages.
+# with a burst of one message (by default).
+#
+# The messages are emitted when the percentage of dropped system calls
+# with respect the number of events in the last second
+# is greater than the given threshold (a double in the range [0, 1]).
+#
+# For debugging/testing it is possible to simulate the drops using
+# the `simulate_drops: true`. In this case the threshold does not apply.
 
 syscall_event_drops:
+  threshold: .1
   actions:
     - log
     - alert
   rate: .03333
-  max_burst: 10
+  max_burst: 1
+
+# Falco uses a shared buffer between the kernel and userspace to receive
+# the events (eg., system call information) in userspace.
+#
+# Anyways, the underlying libraries can also timeout for various reasons.
+# For example, there could have been issues while reading an event.
+# Or the particular event needs to be skipped.
+# Normally, it's very unlikely that Falco does not receive events consecutively.
+#
+# Falco is able to detect such uncommon situation.
+#
+# Here you can configure the maximum number of consecutive timeouts without an event
+# after which you want Falco to alert.
+# By default this value is set to 1000 consecutive timeouts without an event at all.
+# How this value maps to a time interval depends on the CPU frequency.
+
+syscall_event_timeouts:
+  max_consecutives: 1000
 
 # Falco continuously monitors outputs performance. When an output channel does not allow
 # to deliver an alert within a given deadline, an error is reported indicating
@@ -152,11 +180,14 @@ stdout_output:
 # $ openssl req -newkey rsa:2048 -nodes -keyout key.pem -x509 -days 365 -out certificate.pem
 # $ cat certificate.pem key.pem > falco.pem
 # $ sudo cp falco.pem /etc/falco/falco.pem
-
+#
+# It also exposes a healthy endpoint that can be used to check if Falco is up and running
+# By default the endpoint is /healthz
 webserver:
   enabled: true
   listen_port: 8765
   k8s_audit_endpoint: /k8s-audit
+  k8s_healthz_endpoint: /healthz
   ssl_enabled: false
   ssl_certificate: /etc/falco/falco.pem
 
